@@ -147,16 +147,17 @@ class SystemAudioRecorder:
             # Find the default loopback device
             loopback_device = None
             default_output_idx = wasapi_info.get("defaultOutputDevice", -1)
+            default_output_name = ""
+            if default_output_idx >= 0:
+                try:
+                    default_output_name = self._p.get_device_info_by_index(default_output_idx).get("name", "").split(" (")[0]
+                except Exception:
+                    pass
 
             for i in range(self._p.get_device_count()):
                 dev = self._p.get_device_info_by_index(i)
                 if dev.get("isLoopbackDevice", False):
-                    # Prefer the loopback that matches the default output
-                    if dev.get("name", "").find(
-                        self._p.get_device_info_by_index(default_output_idx)
-                        .get("name", "???")
-                        .split(" (")[0]
-                    ) != -1:
+                    if default_output_name and dev.get("name", "").find(default_output_name) != -1:
                         loopback_device = dev
                         break
                     if loopback_device is None:
@@ -262,7 +263,7 @@ def get_gpu_info() -> dict:
         if torch.cuda.is_available():
             info["cuda_available"] = True
             info["gpu_name"] = torch.cuda.get_device_name(0)
-            info["vram_mb"] = int(torch.cuda.get_device_properties(0).total_mem / 1024 / 1024)
+            info["vram_mb"] = int(torch.cuda.get_device_properties(0).total_memory / 1024 / 1024)
     except ImportError:
         pass
     return info
@@ -347,18 +348,20 @@ def transcribe_and_diarize(
             status("Zeitstempel-Ausrichtung (System)...")
             sys_result = whisperx.align(sys_result["segments"], align_model, align_metadata, sys_audio, device)
 
+            # Free whisper + alignment models before loading diarization (saves ~2GB VRAM)
+            del model, align_model, align_metadata
+            import gc; gc.collect()
+            if device == "cuda":
+                torch.cuda.empty_cache()
+
             status("Sprechererkennung (Diarisierung)...")
             diarize_pipeline = DiarizationPipeline(token=hf_token, device=device)
 
             try:
-                diarize_segments = diarize_pipeline(sys_audio, min_speakers=2, max_speakers=10)
-            except (OSError, RuntimeError):
-                import torchaudio
-                waveform, sr = torchaudio.load(system_path)
-                diarize_segments = diarize_pipeline(
-                    {"waveform": waveform, "sample_rate": sr},
-                    min_speakers=2, max_speakers=10,
-                )
+                diarize_segments = diarize_pipeline(sys_audio, min_speakers=1, max_speakers=10)
+            except (OSError, RuntimeError, ImportError, AttributeError):
+                # TorchCodec DLL issue — fall back to file path input
+                diarize_segments = diarize_pipeline(system_path, min_speakers=1, max_speakers=10)
 
             sys_result = assign_word_speakers(diarize_segments, sys_result)
             all_segments.extend(_extract_segments(sys_result))
@@ -860,31 +863,41 @@ class EBAProtokollApp(tk.Tk):
             )
             return
 
+        # Read all tkinter vars on main thread before launching worker (thread safety)
+        worker_args = {
+            "hf_token": hf_token,
+            "model": self._model_var.get(),
+            "language": self._lang_var.get(),
+            "base_dir": self._dir_var.get().strip() or DEFAULT_CONFIG["output_dir"],
+            "project": self._project_var.get().strip() or "Besprechung",
+            "mic_path": self._last_mic_path,
+            "sys_path": self._last_sys_path,
+        }
+
         self._transcribe_btn.config(state="disabled")
         self._record_btn.config(state="disabled")
         self._import_btn.config(state="disabled")
         self._progress.start(15)
 
-        thread = threading.Thread(target=self._transcription_worker, daemon=True)
+        thread = threading.Thread(target=self._transcription_worker, args=(worker_args,), daemon=True)
         thread.start()
 
-    def _transcription_worker(self) -> None:
+    def _transcription_worker(self, args: dict) -> None:
         """Runs in a background thread."""
         try:
-            hf_token = self._token_var.get().strip()
+            sys_path = args["sys_path"]
 
             # Check if system audio is silent (skip diarization on empty loopback)
-            sys_path = self._last_sys_path
             if sys_path and self._sys_recorder and not self._sys_recorder.has_audio_content():
                 self._set_status("System-Audio ist stumm -- wird uebersprungen.")
                 sys_path = ""
 
             all_segments = transcribe_and_diarize(
-                mic_path=self._last_mic_path,
+                mic_path=args["mic_path"],
                 system_path=sys_path,
-                whisper_model_name=self._model_var.get(),
-                language=self._lang_var.get(),
-                hf_token=hf_token,
+                whisper_model_name=args["model"],
+                language=args["language"],
+                hf_token=args["hf_token"],
                 progress_callback=self._set_status,
             )
 
@@ -894,10 +907,10 @@ class EBAProtokollApp(tk.Tk):
                 return
 
             # Save transcript
-            base_dir = self._dir_var.get().strip() or DEFAULT_CONFIG["output_dir"]
+            base_dir = args["base_dir"]
             ensure_directories(base_dir)
 
-            project = self._project_var.get().strip() or "Besprechung"
+            project = args["project"]
             safe_project = "".join(c if (c.isalnum() or c in "-_ ") else "_" for c in project)
             out_path = os.path.join(
                 base_dir, "transkripte", f"{safe_project}_{datetime.now():%Y-%m-%d_%H%M%S}.txt"

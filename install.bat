@@ -233,15 +233,7 @@ echo   whisperx installiert automatisch: faster-whisper, pyannote-audio v4, etc.
 echo   Dies kann einige Minuten dauern...
 echo.
 
-:: --no-build-isolation verhindert, dass pip torch durch eine CPU-Version ersetzt
 pip install whisperx sounddevice numpy PyAudioWPatch
-
-:: Sicherheitscheck: CUDA darf nicht durch whisperx-Abhaengigkeiten entfernt worden sein
-python -c "import torch; assert torch.cuda.is_available(), 'CUDA lost'" >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo   WARNUNG: CUDA wurde durch Abhaengigkeiten ueberschrieben. Repariere...
-    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126 --force-reinstall >nul 2>&1
-)
 if %ERRORLEVEL% neq 0 (
     echo.
     echo  FEHLER: Installation der Abhaengigkeiten fehlgeschlagen!
@@ -252,6 +244,17 @@ if %ERRORLEVEL% neq 0 (
     echo      Download: https://visualstudio.microsoft.com/visual-cpp-build-tools/
     echo.
     goto :error_exit
+)
+
+:: Sicherheitscheck: CUDA darf nicht durch whisperx-Abhaengigkeiten entfernt worden sein
+python -c "import torch; assert torch.cuda.is_available(), 'CUDA lost'" >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo   WARNUNG: CUDA wurde durch Abhaengigkeiten ueberschrieben. Repariere...
+    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126 --force-reinstall >nul 2>&1
+    if !ERRORLEVEL! neq 0 (
+        echo  FEHLER: CUDA-Reparatur fehlgeschlagen!
+        goto :error_exit
+    )
 )
 
 echo.
@@ -313,13 +316,15 @@ echo.
 set /p "HF_TOKEN=  HuggingFace-Token eingeben (oder Enter zum Ueberspringen): "
 
 :: config.json erstellen (Schluessel muessen mit app.py uebereinstimmen)
-echo {> "%INSTALL_DIR%\config.json"
-echo   "hf_token": "!HF_TOKEN!",>> "%INSTALL_DIR%\config.json"
-echo   "whisper_model": "small",>> "%INSTALL_DIR%\config.json"
-echo   "language": "de",>> "%INSTALL_DIR%\config.json"
-echo   "speaker_names": {},>> "%INSTALL_DIR%\config.json"
-echo   "output_dir": "C:\\EBA-Protokoll">> "%INSTALL_DIR%\config.json"
-echo }>> "%INSTALL_DIR%\config.json"
+(
+echo {
+echo   "hf_token": "!HF_TOKEN!",
+echo   "whisper_model": "small",
+echo   "language": "de",
+echo   "speaker_names": {},
+echo   "output_dir": "C:\\EBA-Protokoll"
+echo }
+) > "%INSTALL_DIR%\config.json"
 
 if not "!HF_TOKEN!"=="" (
     echo.
