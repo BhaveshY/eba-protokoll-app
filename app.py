@@ -308,6 +308,7 @@ def transcribe_and_diarize(
     """Transcribe mic + system tracks using shared models. Returns merged, sorted segments."""
     import whisperx
     import torch
+    from whisperx.diarize import DiarizationPipeline, assign_word_speakers
 
     def status(msg):
         if progress_callback:
@@ -331,9 +332,10 @@ def transcribe_and_diarize(
         mic_audio = _load_audio_safe(mic_path)
         mic_result = model.transcribe(mic_audio, batch_size=16)
 
-        status("Zeitstempel-Ausrichtung (Mikrofon)...")
-        mic_result = whisperx.align(mic_result["segments"], align_model, align_metadata, mic_audio, device)
-        all_segments.extend(_extract_segments(mic_result, speaker_label="Ich"))
+        if mic_result["segments"]:
+            status("Zeitstempel-Ausrichtung (Mikrofon)...")
+            mic_result = whisperx.align(mic_result["segments"], align_model, align_metadata, mic_audio, device)
+            all_segments.extend(_extract_segments(mic_result, speaker_label="Ich"))
 
     # --- System track (needs diarization) ---
     if system_path and os.path.exists(system_path):
@@ -341,24 +343,25 @@ def transcribe_and_diarize(
         sys_audio = _load_audio_safe(system_path)
         sys_result = model.transcribe(sys_audio, batch_size=16)
 
-        status("Zeitstempel-Ausrichtung (System)...")
-        sys_result = whisperx.align(sys_result["segments"], align_model, align_metadata, sys_audio, device)
+        if sys_result["segments"]:
+            status("Zeitstempel-Ausrichtung (System)...")
+            sys_result = whisperx.align(sys_result["segments"], align_model, align_metadata, sys_audio, device)
 
-        status("Sprechererkennung (Diarisierung)...")
-        diarize_pipeline = whisperx.DiarizationPipeline(token=hf_token, device=device)
+            status("Sprechererkennung (Diarisierung)...")
+            diarize_pipeline = DiarizationPipeline(token=hf_token, device=device)
 
-        try:
-            diarize_segments = diarize_pipeline(sys_audio, min_speakers=2, max_speakers=10)
-        except (OSError, RuntimeError):
-            import torchaudio
-            waveform, sr = torchaudio.load(system_path)
-            diarize_segments = diarize_pipeline(
-                {"waveform": waveform, "sample_rate": sr},
-                min_speakers=2, max_speakers=10,
-            )
+            try:
+                diarize_segments = diarize_pipeline(sys_audio, min_speakers=2, max_speakers=10)
+            except (OSError, RuntimeError):
+                import torchaudio
+                waveform, sr = torchaudio.load(system_path)
+                diarize_segments = diarize_pipeline(
+                    {"waveform": waveform, "sample_rate": sr},
+                    min_speakers=2, max_speakers=10,
+                )
 
-        sys_result = whisperx.assign_word_speakers(diarize_segments, sys_result)
-        all_segments.extend(_extract_segments(sys_result))
+            sys_result = assign_word_speakers(diarize_segments, sys_result)
+            all_segments.extend(_extract_segments(sys_result))
 
     all_segments.sort(key=lambda s: s["start"])
     return all_segments

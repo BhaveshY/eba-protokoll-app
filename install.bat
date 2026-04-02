@@ -352,7 +352,7 @@ if %ERRORLEVEL% neq 0 (
 if not "!HF_TOKEN!"=="" (
     echo   Teste Sprechererkennungs-Modell...
     echo.
-    python -c "from whisperx import DiarizationPipeline; print('  Lade Diarization-Pipeline...'); DiarizationPipeline(token='!HF_TOKEN!', device='cpu'); print('  Sprechererkennungs-Modell geladen - OK')"
+    python -c "from whisperx.diarize import DiarizationPipeline; print('  Lade Diarization-Pipeline...'); DiarizationPipeline(token='!HF_TOKEN!', device='cpu'); print('  Sprechererkennungs-Modell geladen - OK')"
     if !ERRORLEVEL! neq 0 (
         echo.
         echo  WARNUNG: Sprechererkennungs-Modell konnte nicht geladen werden.
