@@ -160,7 +160,8 @@ if %ERRORLEVEL% neq 0 (
     echo.
     winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements >nul 2>&1
 
-    :: PATH aktualisieren und erneut pruefen
+    :: PATH aktualisieren (winget aendert PATH nur fuer neue Terminals)
+    set "PATH=%PATH%;C:\ffmpeg\bin;%LOCALAPPDATA%\Microsoft\WinGet\Links"
     where ffmpeg >nul 2>&1
     if !ERRORLEVEL! neq 0 (
         echo  ============================================================
@@ -378,19 +379,20 @@ echo.
 
 set "DESKTOP=%USERPROFILE%\Desktop"
 
-(
-    echo @echo off
-    echo cd /d C:\EBA-Protokoll
-    echo .venv\Scripts\pythonw.exe app.py
-) > "%DESKTOP%\EBA Protokoll.bat"
+:: .lnk Verknuepfung statt .bat (vermeidet SmartScreen-Warnungen)
+powershell -Command "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%DESKTOP%\EBA Protokoll.lnk'); $s.TargetPath = 'C:\EBA-Protokoll\.venv\Scripts\pythonw.exe'; $s.Arguments = 'app.py'; $s.WorkingDirectory = 'C:\EBA-Protokoll'; $s.Save()" >nul 2>&1
 
-if exist "%DESKTOP%\EBA Protokoll.bat" (
+if exist "%DESKTOP%\EBA Protokoll.lnk" (
     echo   Desktop-Verknuepfung erstellt - OK
-    echo   Pfad: %DESKTOP%\EBA Protokoll.bat
+    echo   Pfad: %DESKTOP%\EBA Protokoll.lnk
 ) else (
-    echo  WARNUNG: Desktop-Verknuepfung konnte nicht erstellt werden.
-    echo  Bitte erstellen Sie manuell eine Verknuepfung zu:
-    echo    %INSTALL_DIR%\app.py
+    :: Fallback: .bat Verknuepfung
+    (
+        echo @echo off
+        echo cd /d C:\EBA-Protokoll
+        echo .venv\Scripts\pythonw.exe app.py
+    ) > "%DESKTOP%\EBA Protokoll.bat"
+    echo   Desktop-Verknuepfung erstellt (.bat Fallback^) - OK
 )
 echo.
 
