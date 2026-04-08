@@ -14,30 +14,48 @@ Target hardware: Ryzen CPU + NVIDIA GTX GPU (Windows 11)
 import gc
 import json
 import logging
+import logging.handlers
 import os
+import shutil
 import subprocess
+import sys
 import time
 import traceback
 import wave
-import struct
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from datetime import datetime
 from pathlib import Path
 
-logging.basicConfig(
-    filename=os.path.join(os.path.dirname(os.path.abspath(__file__)), "eba_debug.log"),
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+# pythonw.exe sets sys.stdout/stderr to None — PyTorch crashes when downloading models
+# because it tries sys.stdout.write(). Redirect to devnull to prevent this.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+
+# --- Log rotation (5 MB max, 2 backups) ---
+_log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eba_debug.log")
+_log_handler = logging.handlers.RotatingFileHandler(
+    _log_path, maxBytes=5 * 1024 * 1024, backupCount=2, encoding="utf-8",
 )
+_log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+logging.root.addHandler(_log_handler)
+logging.root.setLevel(logging.DEBUG)
 
 # ---------------------------------------------------------------------------
 # Ensure FFmpeg is on PATH (user env var may not be inherited by this process)
 # ---------------------------------------------------------------------------
-_FFMPEG_DIR = r"C:\ffmpeg\bin"
-if os.path.isdir(_FFMPEG_DIR) and _FFMPEG_DIR not in os.environ.get("PATH", ""):
-    os.environ["PATH"] = _FFMPEG_DIR + ";" + os.environ.get("PATH", "")
+if not shutil.which("ffmpeg"):
+    for _d in [
+        r"C:\ffmpeg\bin",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links"),
+        r"C:\ProgramData\chocolatey\bin",
+    ]:
+        if os.path.isfile(os.path.join(_d, "ffmpeg.exe")):
+            os.environ["PATH"] = _d + ";" + os.environ.get("PATH", "")
+            break
 
 # ---------------------------------------------------------------------------
 # Configuration helpers
@@ -63,14 +81,25 @@ def load_config() -> dict:
                 saved = json.load(f)
             merged = {**DEFAULT_CONFIG, **saved}
             return merged
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.warning("config.json corrupt, using defaults: %s", exc)
+            # Back up corrupt file so user can recover manually
+            try:
+                bak = CONFIG_PATH.with_suffix(".json.bak")
+                shutil.copy2(CONFIG_PATH, bak)
+            except Exception:
+                pass
     return dict(DEFAULT_CONFIG)
 
 
 def save_config(cfg: dict) -> None:
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    try:
+        tmp = CONFIG_PATH.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, CONFIG_PATH)
+    except Exception as exc:
+        logging.error("Failed to save config: %s", exc)
 
 
 def ensure_directories(base: str) -> None:
@@ -86,11 +115,11 @@ def compress_wav_to_flac(wav_path: str) -> str:
             ["ffmpeg", "-y", "-i", wav_path, "-c:a", "flac", flac_path],
             capture_output=True, timeout=300,
         )
-        if result.returncode == 0 and os.path.exists(flac_path):
+        if result.returncode == 0 and os.path.exists(flac_path) and os.path.getsize(flac_path) > 1024:
             os.remove(wav_path)
             return flac_path
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        logging.warning("FLAC compression failed: %s", exc)
     return wav_path
 
 
@@ -227,9 +256,6 @@ class SystemAudioRecorder:
             self._wf.setsampwidth(2)
             self._wf.setframerate(self.samplerate)
 
-            self._running = True
-            self.available = True
-
             self._stream = self._p.open(
                 format=pyaudio.paInt16,
                 channels=self.channels,
@@ -240,13 +266,19 @@ class SystemAudioRecorder:
                 stream_callback=self._callback,
             )
             self._stream.start_stream()
+            self._running = True
+            self.available = True
 
         except ImportError:
             self.error_message = "PyAudioWPatch nicht installiert."
+            self._running = False
+            self.available = False
             self._close_wav()
             self._cleanup()
         except Exception as exc:
             self.error_message = f"System-Audio Fehler: {exc}"
+            self._running = False
+            self.available = False
             self._close_wav()
             self._cleanup()
 
@@ -263,8 +295,8 @@ class SystemAudioRecorder:
             try:
                 self._stream.stop_stream()
                 self._stream.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.debug("Stream close error: %s", exc)
             self._stream = None
         self._close_wav()
         self._cleanup()
@@ -279,8 +311,8 @@ class SystemAudioRecorder:
         if self._p is not None:
             try:
                 self._p.terminate()
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.debug("PyAudio terminate error: %s", exc)
             self._p = None
 
     def has_audio_content(self) -> bool:
@@ -288,6 +320,7 @@ class SystemAudioRecorder:
         if not os.path.exists(self.filepath):
             return False
         try:
+            import numpy as np
             with wave.open(self.filepath, "rb") as wf:
                 n_frames = wf.getnframes()
                 if n_frames == 0:
@@ -295,8 +328,8 @@ class SystemAudioRecorder:
                 check_frames = min(n_frames, wf.getframerate() * 5)
                 raw = wf.readframes(check_frames)
 
-            samples = struct.unpack(f"<{len(raw) // 2}h", raw)
-            rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
+            samples = np.frombuffer(raw, dtype=np.int16)
+            rms = np.sqrt(np.mean(samples.astype(np.float64) ** 2))
             return rms > 50
         except Exception:
             return False
@@ -315,8 +348,8 @@ def get_gpu_info() -> dict:
             info["cuda_available"] = True
             info["gpu_name"] = torch.cuda.get_device_name(0)
             info["vram_mb"] = int(torch.cuda.get_device_properties(0).total_memory / 1024 / 1024)
-    except ImportError:
-        pass
+    except ImportError as exc:
+        logging.debug("GPU info unavailable: %s", exc)
     return info
 
 
@@ -344,28 +377,41 @@ def _load_audio_safe(filepath: str):
         pass
 
     # 3) stdlib wave module (WAV files only, always available)
-    with wave.open(filepath, "rb") as wf:
-        n_channels = wf.getnchannels()
-        sampwidth = wf.getsampwidth()
-        sample_rate = wf.getframerate()
-        raw = wf.readframes(wf.getnframes())
+    try:
+        with wave.open(filepath, "rb") as wf:
+            n_channels = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            sample_rate = wf.getframerate()
+            raw = wf.readframes(wf.getnframes())
 
-    if sampwidth == 2:
-        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-    elif sampwidth == 4:
-        samples = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
-    else:
-        samples = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+        if sampwidth == 2:
+            samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        elif sampwidth == 4:
+            samples = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+        else:
+            samples = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
 
-    if n_channels > 1:
-        samples = samples.reshape(-1, n_channels).mean(axis=1)
+        if n_channels > 1:
+            samples = samples.reshape(-1, n_channels).mean(axis=1)
 
-    if sample_rate != 16000:
-        import scipy.signal
-        num_samples = int(len(samples) * 16000 / sample_rate)
-        samples = scipy.signal.resample(samples, num_samples)
+        if sample_rate != 16000:
+            import scipy.signal
+            from math import gcd
+            g = gcd(16000, sample_rate)
+            up, down = 16000 // g, sample_rate // g
+            if up * down < 1000:
+                samples = scipy.signal.resample_poly(samples, up, down).astype(np.float32)
+            else:
+                num_samples = int(len(samples) * 16000 / sample_rate)
+                samples = scipy.signal.resample(samples, num_samples)
 
-    return samples.astype(np.float32)
+        return samples.astype(np.float32)
+    except Exception:
+        raise RuntimeError(
+            f"Audiodatei konnte nicht geladen werden: {filepath}\n"
+            "Bitte stellen Sie sicher, dass FFmpeg installiert ist "
+            "(benoetigt fuer MP3/M4A/FLAC)."
+        )
 
 
 def _reduce_noise(audio, sr: int = 16000):
@@ -412,6 +458,9 @@ def _get_batch_size(device: str) -> int:
         return 8
 
 
+_whisper_cache = {"key": None, "model": None}
+
+
 def transcribe_and_diarize(
     mic_path: str,
     system_path: str,
@@ -428,9 +477,9 @@ def transcribe_and_diarize(
     import torch
     from whisperx.diarize import DiarizationPipeline, assign_word_speakers
 
-    def status(msg):
+    def status(msg, pct=-1):
         if progress_callback:
-            progress_callback(msg)
+            progress_callback(msg, pct)
 
     def cancelled() -> bool:
         return cancel_event is not None and cancel_event.is_set()
@@ -439,14 +488,35 @@ def transcribe_and_diarize(
     compute_type = "int8" if device == "cuda" else "float32"
     batch_size = _get_batch_size(device)
 
-    status("Lade Whisper-Modell...")
-    model = whisperx.load_model(whisper_model_name, device, language=language, compute_type=compute_type)
+    # --- Load or reuse cached Whisper model ---
+    cache_key = (whisper_model_name, device, language, compute_type)
+    if _whisper_cache["key"] == cache_key and _whisper_cache["model"] is not None:
+        status("Whisper-Modell aus Cache...", 3)
+        model = _whisper_cache["model"]
+    else:
+        if _whisper_cache["model"] is not None:
+            del _whisper_cache["model"]
+            _whisper_cache["model"] = None
+            _whisper_cache["key"] = None
+            gc.collect()
+            if device == "cuda":
+                torch.cuda.empty_cache()
+        status("Lade Whisper-Modell...", 0)
+        model = whisperx.load_model(whisper_model_name, device, language=language, compute_type=compute_type)
+        _whisper_cache["model"] = model
+        _whisper_cache["key"] = cache_key
 
     if cancelled():
         return []
 
-    status("Lade Alignment-Modell...")
-    align_model, align_metadata = whisperx.load_align_model(language_code=language, device=device)
+    # --- Lazy-load alignment model (only when needed) ---
+    align_model = align_metadata = None
+
+    def ensure_align_model():
+        nonlocal align_model, align_metadata
+        if align_model is None:
+            status("Lade Alignment-Modell...", 8)
+            align_model, align_metadata = whisperx.load_align_model(language_code=language, device=device)
 
     all_segments = []
 
@@ -455,14 +525,15 @@ def transcribe_and_diarize(
         mic_audio = _load_audio_safe(mic_path)
 
         if noise_reduction:
-            status("Rauschunterdrueckung (Mikrofon)...")
+            status("Rauschunterdrueckung (Mikrofon)...", 10)
             mic_audio = _reduce_noise(mic_audio)
 
-        status("Transkribiere Mikrofon...")
+        status("Transkribiere Mikrofon...", 17)
         mic_result = model.transcribe(mic_audio, batch_size=batch_size)
 
         if mic_result["segments"]:
-            status("Zeitstempel-Ausrichtung (Mikrofon)...")
+            ensure_align_model()
+            status("Zeitstempel-Ausrichtung (Mikrofon)...", 37)
             mic_result = whisperx.align(mic_result["segments"], align_model, align_metadata, mic_audio, device)
             all_segments.extend(_extract_segments(mic_result, speaker_label="Ich"))
 
@@ -473,24 +544,27 @@ def transcribe_and_diarize(
         sys_audio = _load_audio_safe(system_path)
 
         if noise_reduction:
-            status("Rauschunterdrueckung (System-Audio)...")
+            status("Rauschunterdrueckung (System-Audio)...", 42)
             sys_audio = _reduce_noise(sys_audio)
 
-        status("Transkribiere System-Audio...")
+        status("Transkribiere System-Audio...", 49)
         sys_result = model.transcribe(sys_audio, batch_size=batch_size)
 
         if sys_result["segments"]:
-            status("Zeitstempel-Ausrichtung (System)...")
+            ensure_align_model()
+            status("Zeitstempel-Ausrichtung (System)...", 69)
             sys_result = whisperx.align(sys_result["segments"], align_model, align_metadata, sys_audio, device)
 
             # Free whisper + alignment models before loading diarization (saves ~2GB VRAM)
+            _whisper_cache["model"] = None
+            _whisper_cache["key"] = None
             del model, align_model, align_metadata
             gc.collect()
             if device == "cuda":
                 torch.cuda.empty_cache()
 
             if not cancelled():
-                status("Sprechererkennung (Diarisierung)...")
+                status("Sprechererkennung (Diarisierung)...", 74)
                 try:
                     diarize_pipeline = DiarizationPipeline(token=hf_token, device=device)
 
@@ -672,8 +746,8 @@ class EBAProtokollApp(tk.Tk):
         except Exception:
             try:
                 style.theme_use("clam")
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.debug("Theme fallback failed: %s", exc)
 
         # Notebook (tabs)
         self._notebook = ttk.Notebook(self)
@@ -752,7 +826,7 @@ class EBAProtokollApp(tk.Tk):
         # Progress
         self._progress_var = tk.DoubleVar(value=0)
         self._progress = ttk.Progressbar(
-            tab, variable=self._progress_var, mode="indeterminate", length=400
+            tab, variable=self._progress_var, mode="determinate", maximum=100, length=400
         )
         self._progress.pack(fill="x", pady=(10, 4))
 
@@ -876,12 +950,15 @@ class EBAProtokollApp(tk.Tk):
         if d:
             self._dir_var.set(d)
 
-    def _save_settings(self) -> None:
+    def _sync_config_from_ui(self) -> None:
         self.config_data["hf_token"] = self._token_var.get().strip()
         self.config_data["whisper_model"] = self._model_var.get()
         self.config_data["language"] = self._lang_var.get()
         self.config_data["output_dir"] = self._dir_var.get().strip()
         self.config_data["noise_reduction"] = self._nr_var.get()
+
+    def _save_settings(self) -> None:
+        self._sync_config_from_ui()
         save_config(self.config_data)
         ensure_directories(self.config_data["output_dir"])
         messagebox.showinfo("Gespeichert", "Einstellungen wurden gespeichert.")
@@ -1003,9 +1080,18 @@ class EBAProtokollApp(tk.Tk):
         if not filepath:
             return
 
-        # Treat imported file as system track (needs diarization)
-        self._last_mic_path = ""
-        self._last_sys_path = filepath
+        multi_speaker = messagebox.askyesno(
+            "Sprecheranzahl",
+            "Sind mehrere Sprecher in der Aufnahme?\n\n"
+            "Ja = Sprechererkennung (HuggingFace-Token noetig)\n"
+            "Nein = Einzelsprecher (kein Token noetig)",
+        )
+        if multi_speaker:
+            self._last_mic_path = ""
+            self._last_sys_path = filepath
+        else:
+            self._last_mic_path = filepath
+            self._last_sys_path = ""
         self._lastfile_var.set(f"Importiert: {filepath}")
         self._transcribe_btn.config(state="normal")
         self._status_var.set("Datei importiert. Bereit zur Transkription.")
@@ -1054,7 +1140,7 @@ class EBAProtokollApp(tk.Tk):
                                     command=self._cancel_transcription)
         self._record_btn.config(state="disabled")
         self._import_btn.config(state="disabled")
-        self._progress.start(15)
+        self._progress_var.set(0)
 
         thread = threading.Thread(target=self._transcription_worker, args=(worker_args,), daemon=True)
         thread.start()
@@ -1120,18 +1206,18 @@ class EBAProtokollApp(tk.Tk):
             if sys_path and all_segments and args["hf_token"] and not was_cancelled:
                 try:
                     from voice_profiles import extract_speaker_embeddings, identify_speakers, load_profiles
-                    self._set_status("Sprecher-Profile abgleichen...")
+                    self._set_status("Sprecher-Profile abgleichen...", 92)
                     self._last_embeddings = extract_speaker_embeddings(
                         sys_path, all_segments, args["hf_token"],
                     )
                     if self._last_embeddings:
                         profiles = load_profiles()
                         self._auto_names = identify_speakers(self._last_embeddings, profiles)
-                except Exception:
-                    pass  # Voice profiles are optional — never fail on errors
+                except Exception as exc:
+                    logging.warning("Voice profile extraction failed: %s", exc)
 
             # Compress recordings to FLAC (lossless, ~50% smaller) now that transcription is done
-            self._set_status("Komprimiere Aufnahmen...")
+            self._set_status("Komprimiere Aufnahmen...", 97)
             for wav in (args["mic_path"], args["sys_path"]):
                 if wav and os.path.exists(wav) and wav.endswith(".wav"):
                     compress_wav_to_flac(wav)
@@ -1143,16 +1229,20 @@ class EBAProtokollApp(tk.Tk):
             self._set_status(f"Fehler: {exc}")
             self._finish_transcription([])
 
-    def _set_status(self, text: str) -> None:
-        """Thread-safe status update."""
-        self.after(0, lambda: self._status_var.set(text))
+    def _set_status(self, text: str, pct: int = -1) -> None:
+        """Thread-safe status update with optional progress percentage."""
+        def _update():
+            self._status_var.set(text)
+            if pct >= 0:
+                self._progress_var.set(pct)
+        self.after(0, _update)
 
     def _finish_transcription(self, segments: list[dict], out_path: str = "") -> None:
         """Called from worker thread when done."""
 
         def _ui_finish():
-            self._progress.stop()
-            self._progress_var.set(0)
+            self._progress_var.set(100)
+            self.after(500, lambda: self._progress_var.set(0))
             self._transcribe_btn.config(text="TRANSKRIBIEREN",
                                         command=self._start_transcription,
                                         state="normal")
@@ -1190,8 +1280,8 @@ class EBAProtokollApp(tk.Tk):
             try:
                 from voice_profiles import update_profiles
                 update_profiles(new_names, self._last_embeddings)
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.warning("Voice profile update failed: %s", exc)
 
         if out_path:
             transcript_text = format_transcript(segments, new_names)
@@ -1217,11 +1307,7 @@ class EBAProtokollApp(tk.Tk):
             self._stop_recording()
 
         # Persist any changed settings
-        self.config_data["hf_token"] = self._token_var.get().strip()
-        self.config_data["whisper_model"] = self._model_var.get()
-        self.config_data["language"] = self._lang_var.get()
-        self.config_data["output_dir"] = self._dir_var.get().strip()
-        self.config_data["noise_reduction"] = self._nr_var.get()
+        self._sync_config_from_ui()
         save_config(self.config_data)
 
         self.destroy()

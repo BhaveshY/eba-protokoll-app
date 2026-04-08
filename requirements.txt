@@ -1,5 +1,10 @@
+# NOTE: For CUDA support, install torch/torchaudio first:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+torch
+torchaudio
 whisperx>=3.8.0
 sounddevice
 numpy
+scipy
 PyAudioWPatch
 noisereduce

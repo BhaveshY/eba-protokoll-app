@@ -7,3 +7,5 @@ __pycache__/
 aufnahmen/
 transkripte/
 protokolle/
+eba_debug.log
+eba_debug.log.*

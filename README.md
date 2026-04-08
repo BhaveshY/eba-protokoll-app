@@ -89,14 +89,13 @@ Die Datei `requirements.txt` enthaelt die restlichen Abhaengigkeiten.
 ### Schritt 1: App starten
 
 Die App ueber die Desktop-Verknuepfung starten (wird bei der Installation angelegt).
-Alternativ: `start.bat` im Projektordner doppelklicken.
 
 ### Schritt 2: Einstellungen pruefen
 
 Beim ersten Start die Einstellungen oeffnen und konfigurieren:
 - **HuggingFace Token**: Den in Schritt 3 der Installation erstellten Token eingeben.
-- **Modell**: Transkriptionsmodell auswaehlen (Standard: `large-v3` fuer beste Qualitaet,
-  `medium` oder `small` fuer schnellere Verarbeitung bei weniger VRAM).
+- **Modell**: Transkriptionsmodell auswaehlen (Standard: `small` fuer schnelle Verarbeitung,
+  `medium` oder `large-v3` fuer bessere Qualitaet bei mehr VRAM).
 
 ### Schritt 3: Meeting aufnehmen
 
@@ -143,7 +142,6 @@ Siehe `COWORK_PLUGIN_SETUP.md` fuer die Einrichtung des Cowork-Plugins.
 | `transkripte/`   | Transkripte mit Zeitstempeln und Sprecherzuordnung            |
 | `protokolle/`    | Fertige Protokolle (erstellt mit Cowork)                      |
 | `install.bat`    | Installationsskript                                           |
-| `start.bat`      | Startet die App                                               |
 | `requirements.txt` | Python-Abhaengigkeiten                                      |
 
 

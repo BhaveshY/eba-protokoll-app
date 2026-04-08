@@ -12,6 +12,8 @@ Architecture follows meetscribe's proven approach:
 
 import gc
 import json
+import logging
+import os
 import numpy as np
 from collections import defaultdict
 from pathlib import Path
@@ -36,7 +38,8 @@ def load_profiles(path: str = None) -> dict:
             }
             for name, prof in data.items()
         }
-    except Exception:
+    except Exception as exc:
+        logging.warning("speaker_profiles.json corrupt: %s", exc)
         return {}
 
 
@@ -49,8 +52,13 @@ def save_profiles(profiles: dict, path: str = None) -> None:
         }
         for name, prof in profiles.items()
     }
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    try:
+        tmp = p.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, p)
+    except Exception as exc:
+        logging.error("Failed to save speaker profiles: %s", exc)
 
 
 def extract_speaker_embeddings(
@@ -107,7 +115,8 @@ def extract_speaker_embeddings(
                 audio_dict = {"waveform": clip.float(), "sample_rate": sr}
                 emb = inference(audio_dict)
                 embs.append(np.array(emb).flatten().astype(np.float32))
-            except Exception:
+            except Exception as exc:
+                logging.debug("Embedding extraction failed for segment: %s", exc)
                 continue
 
         if embs:
