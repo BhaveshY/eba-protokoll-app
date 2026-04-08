@@ -1,5 +1,6 @@
 config.json
 speaker_profiles.json
+deploy_token.txt
 __pycache__/
 *.pyc
 .venv/

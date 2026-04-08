@@ -319,7 +319,16 @@ echo.
 echo  ============================================================
 echo.
 
-set /p "HF_TOKEN=  HuggingFace-Token eingeben (oder Enter zum Ueberspringen): "
+:: Auto-read token from deploy_token.txt if present (for zero-config deployment)
+if exist "%SCRIPT_DIR%deploy_token.txt" (
+    set /p HF_TOKEN=<"%SCRIPT_DIR%deploy_token.txt"
+    echo   Token aus deploy_token.txt gelesen - OK
+) else if exist "%INSTALL_DIR%\deploy_token.txt" (
+    set /p HF_TOKEN=<"%INSTALL_DIR%\deploy_token.txt"
+    echo   Token aus deploy_token.txt gelesen - OK
+) else (
+    set /p "HF_TOKEN=  HuggingFace-Token eingeben (oder Enter zum Ueberspringen): "
+)
 
 :: config.json erstellen (Schluessel muessen mit app.py uebereinstimmen)
 (
@@ -328,7 +337,8 @@ echo   "hf_token": "!HF_TOKEN!",
 echo   "whisper_model": "small",
 echo   "language": "de",
 echo   "speaker_names": {},
-echo   "output_dir": "C:\\EBA-Protokoll"
+echo   "output_dir": "C:\\EBA-Protokoll",
+echo   "noise_reduction": true
 echo }
 ) > "%INSTALL_DIR%\config.json"
 
