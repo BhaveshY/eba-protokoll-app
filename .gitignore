@@ -1,0 +1,8 @@
+config.json
+speaker_profiles.json
+__pycache__/
+*.pyc
+.venv/
+aufnahmen/
+transkripte/
+protokolle/

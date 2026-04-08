@@ -11,8 +11,10 @@ Requires:
 Target hardware: Ryzen CPU + NVIDIA GTX GPU (Windows 11)
 """
 
+import gc
 import json
 import os
+import subprocess
 import time
 import wave
 import struct
@@ -35,6 +37,7 @@ DEFAULT_CONFIG = {
     "language": "de",
     "speaker_names": {},
     "output_dir": r"C:\EBA-Protokoll",
+    "noise_reduction": True,
 }
 
 
@@ -60,8 +63,24 @@ def ensure_directories(base: str) -> None:
         os.makedirs(os.path.join(base, sub), exist_ok=True)
 
 
+def compress_wav_to_flac(wav_path: str) -> str:
+    """Compress a WAV file to FLAC (lossless, ~50% smaller). Returns FLAC path or original on failure."""
+    flac_path = wav_path.rsplit(".", 1)[0] + ".flac"
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", wav_path, "-c:a", "flac", flac_path],
+            capture_output=True, timeout=300,
+        )
+        if result.returncode == 0 and os.path.exists(flac_path):
+            os.remove(wav_path)
+            return flac_path
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return wav_path
+
+
 # ---------------------------------------------------------------------------
-# Audio recording helpers
+# Audio recording helpers — stream directly to WAV (constant memory)
 # ---------------------------------------------------------------------------
 
 MIC_SAMPLERATE = 16000
@@ -69,31 +88,47 @@ MIC_CHANNELS = 1
 
 
 class MicRecorder:
-    """Records from the default microphone using sounddevice."""
+    """Records from the default microphone using sounddevice.
+    Streams directly to WAV file — memory stays constant regardless of duration."""
 
     def __init__(self, filepath: str, samplerate: int = MIC_SAMPLERATE):
         self.filepath = filepath
         self.samplerate = samplerate
-        self._frames: list[bytes] = []
         self._running = False
         self._stream = None
+        self._wf = None
+        self._lock = threading.Lock()
 
     def start(self) -> None:
         import sounddevice as sd
 
-        self._frames = []
+        self._wf = wave.open(self.filepath, "wb")
+        self._wf.setnchannels(MIC_CHANNELS)
+        self._wf.setsampwidth(2)  # int16
+        self._wf.setframerate(self.samplerate)
+
         self._running = True
-        self._stream = sd.InputStream(
-            samplerate=self.samplerate,
-            channels=MIC_CHANNELS,
-            dtype="int16",
-            callback=self._callback,
-        )
-        self._stream.start()
+        try:
+            self._stream = sd.InputStream(
+                samplerate=self.samplerate,
+                channels=MIC_CHANNELS,
+                dtype="int16",
+                blocksize=4096,
+                callback=self._callback,
+            )
+            self._stream.start()
+        except Exception:
+            self._running = False
+            self._wf.close()
+            self._wf = None
+            raise
 
     def _callback(self, indata, frames, time_info, status):
         if self._running:
-            self._frames.append(indata.copy().tobytes())
+            data = indata.copy().tobytes()
+            with self._lock:
+                if self._wf:
+                    self._wf.writeframesraw(data)
 
     def stop(self) -> None:
         self._running = False
@@ -101,25 +136,23 @@ class MicRecorder:
             self._stream.stop()
             self._stream.close()
             self._stream = None
-        self._save()
-
-    def _save(self) -> None:
-        with wave.open(self.filepath, "wb") as wf:
-            wf.setnchannels(MIC_CHANNELS)
-            wf.setsampwidth(2)  # int16
-            wf.setframerate(self.samplerate)
-            wf.writeframes(b"".join(self._frames))
+        with self._lock:
+            if self._wf:
+                self._wf.close()
+                self._wf = None
 
 
 class SystemAudioRecorder:
-    """Records system / loopback audio via PyAudioWPatch WASAPI loopback."""
+    """Records system / loopback audio via PyAudioWPatch WASAPI loopback.
+    Streams directly to WAV file — memory stays constant regardless of duration."""
 
     def __init__(self, filepath: str):
         self.filepath = filepath
         self._running = False
-        self._frames: list[bytes] = []
         self._p = None
         self._stream = None
+        self._wf = None
+        self._lock = threading.Lock()
         self.samplerate = 16000
         self.channels = 1
         self.available = False
@@ -173,7 +206,12 @@ class SystemAudioRecorder:
             if self.channels < 1:
                 self.channels = 2
 
-            self._frames = []
+            # Open WAV file for streaming write
+            self._wf = wave.open(self.filepath, "wb")
+            self._wf.setnchannels(self.channels)
+            self._wf.setsampwidth(2)
+            self._wf.setframerate(self.samplerate)
+
             self._running = True
             self.available = True
 
@@ -183,21 +221,25 @@ class SystemAudioRecorder:
                 rate=self.samplerate,
                 input=True,
                 input_device_index=int(loopback_device["index"]),
-                frames_per_buffer=1024,
+                frames_per_buffer=4096,
                 stream_callback=self._callback,
             )
             self._stream.start_stream()
 
         except ImportError:
             self.error_message = "PyAudioWPatch nicht installiert."
+            self._close_wav()
             self._cleanup()
         except Exception as exc:
             self.error_message = f"System-Audio Fehler: {exc}"
+            self._close_wav()
             self._cleanup()
 
     def _callback(self, in_data, frame_count, time_info, status):
         if self._running:
-            self._frames.append(in_data)
+            with self._lock:
+                if self._wf:
+                    self._wf.writeframesraw(in_data)
         return (None, 0)  # 0 == paContinue
 
     def stop(self) -> None:
@@ -209,8 +251,14 @@ class SystemAudioRecorder:
             except Exception:
                 pass
             self._stream = None
-        self._save()
+        self._close_wav()
         self._cleanup()
+
+    def _close_wav(self) -> None:
+        with self._lock:
+            if self._wf:
+                self._wf.close()
+                self._wf = None
 
     def _cleanup(self) -> None:
         if self._p is not None:
@@ -219,15 +267,6 @@ class SystemAudioRecorder:
             except Exception:
                 pass
             self._p = None
-
-    def _save(self) -> None:
-        if not self._frames:
-            return
-        with wave.open(self.filepath, "wb") as wf:
-            wf.setnchannels(self.channels)
-            wf.setsampwidth(2)
-            wf.setframerate(self.samplerate)
-            wf.writeframes(b"".join(self._frames))
 
     def has_audio_content(self) -> bool:
         """Check whether the recorded file actually contains audible content."""
@@ -238,15 +277,12 @@ class SystemAudioRecorder:
                 n_frames = wf.getnframes()
                 if n_frames == 0:
                     return False
-                # Read up to 5 seconds to check for silence
                 check_frames = min(n_frames, wf.getframerate() * 5)
                 raw = wf.readframes(check_frames)
-                n_channels = wf.getnchannels()
 
             samples = struct.unpack(f"<{len(raw) // 2}h", raw)
-            # RMS energy
             rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
-            return rms > 50  # threshold above noise floor
+            return rms > 50
         except Exception:
             return False
 
@@ -284,6 +320,20 @@ def _load_audio_safe(filepath: str):
         return waveform.squeeze().numpy()
 
 
+def _reduce_noise(audio, sr: int = 16000):
+    """Apply spectral gating noise reduction optimized for speech.
+    Uses noisereduce with parameters tuned per library source docs (n_fft=512 for speech)."""
+    import noisereduce as nr
+    return nr.reduce_noise(
+        y=audio,
+        sr=sr,
+        stationary=False,
+        prop_decrease=0.85,
+        n_fft=512,
+        n_jobs=-1,
+    )
+
+
 def _extract_segments(result: dict, speaker_label: str = None) -> list[dict]:
     """Extract segment dicts from whisperx result. If speaker_label is set, override all speakers."""
     return [
@@ -298,6 +348,22 @@ def _extract_segments(result: dict, speaker_label: str = None) -> list[dict]:
     ]
 
 
+def _get_batch_size(device: str) -> int:
+    """Choose transcription batch size based on available VRAM."""
+    if device != "cuda":
+        return 8
+    try:
+        import torch
+        vram = torch.cuda.get_device_properties(0).total_memory / 1024 / 1024
+        if vram < 4500:
+            return 4
+        if vram < 6500:
+            return 8
+        return 16
+    except Exception:
+        return 8
+
+
 def transcribe_and_diarize(
     mic_path: str,
     system_path: str,
@@ -305,8 +371,11 @@ def transcribe_and_diarize(
     language: str,
     hf_token: str,
     progress_callback=None,
+    cancel_event: threading.Event = None,
+    noise_reduction: bool = True,
 ) -> list[dict]:
-    """Transcribe mic + system tracks using shared models. Returns merged, sorted segments."""
+    """Transcribe mic + system tracks using shared models. Returns merged, sorted segments.
+    Checks cancel_event between stages. On diarization failure, returns transcript without speaker labels."""
     import whisperx
     import torch
     from whisperx.diarize import DiarizationPipeline, assign_word_speakers
@@ -315,12 +384,18 @@ def transcribe_and_diarize(
         if progress_callback:
             progress_callback(msg)
 
+    def cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     compute_type = "int8" if device == "cuda" else "float32"
+    batch_size = _get_batch_size(device)
 
-    # Load models once, reuse for both tracks
     status("Lade Whisper-Modell...")
     model = whisperx.load_model(whisper_model_name, device, language=language, compute_type=compute_type)
+
+    if cancelled():
+        return []
 
     status("Lade Alignment-Modell...")
     align_model, align_metadata = whisperx.load_align_model(language_code=language, device=device)
@@ -328,21 +403,33 @@ def transcribe_and_diarize(
     all_segments = []
 
     # --- Mic track (all segments = "Ich") ---
-    if mic_path and os.path.exists(mic_path):
-        status("Transkribiere Mikrofon...")
+    if mic_path and os.path.exists(mic_path) and not cancelled():
         mic_audio = _load_audio_safe(mic_path)
-        mic_result = model.transcribe(mic_audio, batch_size=16)
+
+        if noise_reduction:
+            status("Rauschunterdrueckung (Mikrofon)...")
+            mic_audio = _reduce_noise(mic_audio)
+
+        status("Transkribiere Mikrofon...")
+        mic_result = model.transcribe(mic_audio, batch_size=batch_size)
 
         if mic_result["segments"]:
             status("Zeitstempel-Ausrichtung (Mikrofon)...")
             mic_result = whisperx.align(mic_result["segments"], align_model, align_metadata, mic_audio, device)
             all_segments.extend(_extract_segments(mic_result, speaker_label="Ich"))
 
+        del mic_audio
+
     # --- System track (needs diarization) ---
-    if system_path and os.path.exists(system_path):
-        status("Transkribiere System-Audio...")
+    if system_path and os.path.exists(system_path) and not cancelled():
         sys_audio = _load_audio_safe(system_path)
-        sys_result = model.transcribe(sys_audio, batch_size=16)
+
+        if noise_reduction:
+            status("Rauschunterdrueckung (System-Audio)...")
+            sys_audio = _reduce_noise(sys_audio)
+
+        status("Transkribiere System-Audio...")
+        sys_result = model.transcribe(sys_audio, batch_size=batch_size)
 
         if sys_result["segments"]:
             status("Zeitstempel-Ausrichtung (System)...")
@@ -350,21 +437,42 @@ def transcribe_and_diarize(
 
             # Free whisper + alignment models before loading diarization (saves ~2GB VRAM)
             del model, align_model, align_metadata
-            import gc; gc.collect()
+            gc.collect()
             if device == "cuda":
                 torch.cuda.empty_cache()
 
-            status("Sprechererkennung (Diarisierung)...")
-            diarize_pipeline = DiarizationPipeline(token=hf_token, device=device)
+            if not cancelled():
+                status("Sprechererkennung (Diarisierung)...")
+                try:
+                    diarize_pipeline = DiarizationPipeline(token=hf_token, device=device)
 
-            try:
-                diarize_segments = diarize_pipeline(sys_audio, min_speakers=1, max_speakers=10)
-            except (OSError, RuntimeError, ImportError, AttributeError):
-                # TorchCodec DLL issue — fall back to file path input
-                diarize_segments = diarize_pipeline(system_path, min_speakers=1, max_speakers=10)
+                    # Reduce batch sizes — pyannote default=32 causes OOM/37x slowdown on GTX GPUs
+                    pipe = diarize_pipeline.model
+                    if hasattr(pipe, 'embedding_batch_size'):
+                        pipe.embedding_batch_size = 8
+                    if hasattr(pipe, 'segmentation_batch_size'):
+                        pipe.segmentation_batch_size = 8
+                    # Re-enable TF32 — pyannote disables it, losing 10-15% GPU speed
+                    if device == "cuda":
+                        torch.backends.cuda.matmul.allow_tf32 = True
 
-            sys_result = assign_word_speakers(diarize_segments, sys_result)
+                    try:
+                        diarize_segments = diarize_pipeline(sys_audio, min_speakers=1, max_speakers=10)
+                    except (OSError, RuntimeError, ImportError, AttributeError):
+                        diarize_segments = diarize_pipeline(system_path, min_speakers=1, max_speakers=10)
+
+                    sys_result = assign_word_speakers(diarize_segments, sys_result)
+
+                    del diarize_pipeline
+                    gc.collect()
+                    if device == "cuda":
+                        torch.cuda.empty_cache()
+                except Exception as exc:
+                    status(f"Sprechererkennung fehlgeschlagen ({exc}) -- Transkript ohne Sprecherzuordnung.")
+
             all_segments.extend(_extract_segments(sys_result))
+
+        del sys_audio
 
     all_segments.sort(key=lambda s: s["start"])
     return all_segments
@@ -399,6 +507,7 @@ class SpeakerRenameDialog(tk.Toplevel):
         self.grab_set()
 
         self.result: dict = dict(existing_names)
+        self.confirmed: bool = False
         self._entries: dict[str, tk.StringVar] = {}
 
         # Collect unique speakers (exclude "Ich")
@@ -472,6 +581,7 @@ class SpeakerRenameDialog(tk.Toplevel):
         )
 
     def _on_ok(self) -> None:
+        self.confirmed = True
         for speaker_id, var in self._entries.items():
             name = var.get().strip()
             if name:
@@ -503,6 +613,9 @@ class EBAProtokollApp(tk.Tk):
         self._timer_id: str | None = None
         self._last_mic_path: str = ""
         self._last_sys_path: str = ""
+        self._cancel_event: threading.Event | None = None
+        self._last_embeddings: dict = {}
+        self._auto_names: dict = {}
 
         # Style
         style = ttk.Style(self)
@@ -654,9 +767,7 @@ class EBAProtokollApp(tk.Tk):
             state="readonly",
         )
         lang_combo.pack(fill="x")
-        # Map display string back to code on selection
         lang_combo.bind("<<ComboboxSelected>>", lambda e: self._update_lang_code(lang_combo, langs))
-        # Set initial display
         for name, code in langs:
             if code == self._lang_var.get():
                 lang_combo.set(f"{name} ({code})")
@@ -676,6 +787,17 @@ class EBAProtokollApp(tk.Tk):
         ttk.Button(dir_row, text="...", width=4, command=self._browse_dir).pack(
             side="left", padx=(4, 0)
         )
+
+        # Noise reduction
+        nr_frame = ttk.LabelFrame(tab, text="Audio-Vorverarbeitung", padding=6)
+        nr_frame.pack(fill="x", pady=(0, 8))
+
+        self._nr_var = tk.BooleanVar(value=self.config_data.get("noise_reduction", True))
+        ttk.Checkbutton(
+            nr_frame,
+            text="Rauschunterdrueckung vor Transkription (empfohlen)",
+            variable=self._nr_var,
+        ).pack(anchor="w")
 
         # GPU info
         gpu_frame = ttk.LabelFrame(tab, text="GPU Status", padding=6)
@@ -711,6 +833,7 @@ class EBAProtokollApp(tk.Tk):
         self.config_data["whisper_model"] = self._model_var.get()
         self.config_data["language"] = self._lang_var.get()
         self.config_data["output_dir"] = self._dir_var.get().strip()
+        self.config_data["noise_reduction"] = self._nr_var.get()
         save_config(self.config_data)
         ensure_directories(self.config_data["output_dir"])
         messagebox.showinfo("Gespeichert", "Einstellungen wurden gespeichert.")
@@ -872,9 +995,12 @@ class EBAProtokollApp(tk.Tk):
             "project": self._project_var.get().strip() or "Besprechung",
             "mic_path": self._last_mic_path,
             "sys_path": self._last_sys_path,
+            "noise_reduction": self._nr_var.get(),
         }
 
-        self._transcribe_btn.config(state="disabled")
+        self._cancel_event = threading.Event()
+        self._transcribe_btn.config(text="ABBRECHEN", state="normal",
+                                    command=self._cancel_transcription)
         self._record_btn.config(state="disabled")
         self._import_btn.config(state="disabled")
         self._progress.start(15)
@@ -882,13 +1008,21 @@ class EBAProtokollApp(tk.Tk):
         thread = threading.Thread(target=self._transcription_worker, args=(worker_args,), daemon=True)
         thread.start()
 
+    def _cancel_transcription(self) -> None:
+        if self._cancel_event:
+            self._cancel_event.set()
+        self._transcribe_btn.config(state="disabled")
+        self._set_status("Wird abgebrochen...")
+
     def _transcription_worker(self, args: dict) -> None:
         """Runs in a background thread."""
         try:
             sys_path = args["sys_path"]
 
             # Check if system audio is silent (skip diarization on empty loopback)
-            if sys_path and self._sys_recorder and not self._sys_recorder.has_audio_content():
+            if (sys_path and self._sys_recorder
+                    and self._sys_recorder.filepath == sys_path
+                    and not self._sys_recorder.has_audio_content()):
                 self._set_status("System-Audio ist stumm -- wird uebersprungen.")
                 sys_path = ""
 
@@ -899,10 +1033,14 @@ class EBAProtokollApp(tk.Tk):
                 language=args["language"],
                 hf_token=args["hf_token"],
                 progress_callback=self._set_status,
+                cancel_event=self._cancel_event,
+                noise_reduction=args["noise_reduction"],
             )
 
+            was_cancelled = self._cancel_event and self._cancel_event.is_set()
+
             if not all_segments:
-                self._set_status("Keine Sprache erkannt.")
+                self._set_status("Abgebrochen." if was_cancelled else "Keine Sprache erkannt.")
                 self._finish_transcription([])
                 return
 
@@ -920,7 +1058,33 @@ class EBAProtokollApp(tk.Tk):
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(format_transcript(all_segments, speaker_names))
 
-            self._set_status(f"Transkript gespeichert: {out_path}")
+            if was_cancelled:
+                self._set_status(f"Abgebrochen. Teilergebnis gespeichert: {out_path}")
+            else:
+                self._set_status(f"Transkript gespeichert: {out_path}")
+
+            # Extract speaker embeddings for voice profiles (before FLAC compression changes file)
+            self._last_embeddings = {}
+            self._auto_names = {}
+            if sys_path and all_segments and args["hf_token"] and not was_cancelled:
+                try:
+                    from voice_profiles import extract_speaker_embeddings, identify_speakers, load_profiles
+                    self._set_status("Sprecher-Profile abgleichen...")
+                    self._last_embeddings = extract_speaker_embeddings(
+                        sys_path, all_segments, args["hf_token"],
+                    )
+                    if self._last_embeddings:
+                        profiles = load_profiles()
+                        self._auto_names = identify_speakers(self._last_embeddings, profiles)
+                except Exception:
+                    pass  # Voice profiles are optional — never fail on errors
+
+            # Compress recordings to FLAC (lossless, ~50% smaller) now that transcription is done
+            self._set_status("Komprimiere Aufnahmen...")
+            for wav in (args["mic_path"], args["sys_path"]):
+                if wav and os.path.exists(wav) and wav.endswith(".wav"):
+                    compress_wav_to_flac(wav)
+
             self._finish_transcription(all_segments, out_path)
 
         except Exception as exc:
@@ -937,7 +1101,9 @@ class EBAProtokollApp(tk.Tk):
         def _ui_finish():
             self._progress.stop()
             self._progress_var.set(0)
-            self._transcribe_btn.config(state="normal")
+            self._transcribe_btn.config(text="TRANSKRIBIEREN",
+                                        command=self._start_transcription,
+                                        state="normal")
             self._record_btn.config(state="normal")
             self._import_btn.config(state="normal")
 
@@ -950,28 +1116,41 @@ class EBAProtokollApp(tk.Tk):
         self.after(0, _ui_finish)
 
     def _show_speaker_rename(self, segments: list[dict], out_path: str) -> None:
-        """Show the speaker renaming dialog, then re-save the transcript."""
+        """Show the speaker renaming dialog, then re-save the transcript and update voice profiles."""
         existing_names = dict(self.config_data.get("speaker_names", {}))
+
+        # Merge auto-identified names from voice profiles
+        for speaker_id, name in self._auto_names.items():
+            existing_names[speaker_id] = name
+
         dlg = SpeakerRenameDialog(self, segments, existing_names)
         self.wait_window(dlg)
 
-        new_names = dlg.result
-        if new_names != existing_names:
-            # Update config
-            self.config_data["speaker_names"] = new_names
-            save_config(self.config_data)
+        if not dlg.confirmed:
+            return
 
-            # Re-save transcript with updated names
-            if out_path:
-                transcript_text = format_transcript(segments, new_names)
-                try:
-                    with open(out_path, "w", encoding="utf-8") as f:
-                        f.write(transcript_text)
-                    self._status_var.set(
-                        f"Transkript mit Sprechernamen aktualisiert: {out_path}"
-                    )
-                except Exception as exc:
-                    self._status_var.set(f"Fehler beim Speichern: {exc}")
+        new_names = dlg.result
+        self.config_data["speaker_names"] = new_names
+        save_config(self.config_data)
+
+        # Update voice profiles with confirmed names
+        if self._last_embeddings:
+            try:
+                from voice_profiles import update_profiles
+                update_profiles(new_names, self._last_embeddings)
+            except Exception:
+                pass
+
+        if out_path:
+            transcript_text = format_transcript(segments, new_names)
+            try:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(transcript_text)
+                self._status_var.set(
+                    f"Transkript mit Sprechernamen aktualisiert: {out_path}"
+                )
+            except Exception as exc:
+                self._status_var.set(f"Fehler beim Speichern: {exc}")
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -990,6 +1169,7 @@ class EBAProtokollApp(tk.Tk):
         self.config_data["whisper_model"] = self._model_var.get()
         self.config_data["language"] = self._lang_var.get()
         self.config_data["output_dir"] = self._dir_var.get().strip()
+        self.config_data["noise_reduction"] = self._nr_var.get()
         save_config(self.config_data)
 
         self.destroy()

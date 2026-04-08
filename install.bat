@@ -105,6 +105,11 @@ if exist "%SCRIPT_DIR%app.py" (
     echo   Bitte kopieren Sie app.py manuell nach %INSTALL_DIR%
 )
 
+if exist "%SCRIPT_DIR%voice_profiles.py" (
+    copy /Y "%SCRIPT_DIR%voice_profiles.py" "%INSTALL_DIR%\voice_profiles.py" >nul
+    echo   voice_profiles.py kopiert     - OK
+)
+
 if exist "%SCRIPT_DIR%requirements.txt" (
     copy /Y "%SCRIPT_DIR%requirements.txt" "%INSTALL_DIR%\requirements.txt" >nul
     echo   requirements.txt kopiert      - OK
@@ -234,7 +239,7 @@ echo   whisperx installiert automatisch: faster-whisper, pyannote-audio v4, etc.
 echo   Dies kann einige Minuten dauern...
 echo.
 
-pip install whisperx sounddevice numpy PyAudioWPatch
+pip install whisperx sounddevice numpy PyAudioWPatch noisereduce
 if %ERRORLEVEL% neq 0 (
     echo.
     echo  FEHLER: Installation der Abhaengigkeiten fehlgeschlagen!
