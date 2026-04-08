@@ -753,24 +753,24 @@ class EBAProtokollApp(tk.Tk):
         lang_frame.pack(fill="x", pady=(0, 8))
 
         self._lang_var = tk.StringVar(value=self.config_data.get("language", "de"))
-        langs = [
+        self._langs = [
             ("Deutsch", "de"),
             ("Englisch", "en"),
             ("Franzoesisch", "fr"),
             ("Spanisch", "es"),
             ("Italienisch", "it"),
         ]
-        lang_combo = ttk.Combobox(
+        self._lang_combo = ttk.Combobox(
             lang_frame,
-            textvariable=self._lang_var,
-            values=[f"{name} ({code})" for name, code in langs],
+            values=[f"{name} ({code})" for name, code in self._langs],
             state="readonly",
         )
-        lang_combo.pack(fill="x")
-        lang_combo.bind("<<ComboboxSelected>>", lambda e: self._update_lang_code(lang_combo, langs))
-        for name, code in langs:
+        self._lang_combo.pack(fill="x")
+        self._lang_combo.bind("<<ComboboxSelected>>", self._on_lang_selected)
+        # Set initial display without corrupting the code var
+        for name, code in self._langs:
             if code == self._lang_var.get():
-                lang_combo.set(f"{name} ({code})")
+                self._lang_combo.set(f"{name} ({code})")
                 break
 
         # Output directory
@@ -816,9 +816,9 @@ class EBAProtokollApp(tk.Tk):
     # ------------------------------------------------------------------
     # Settings helpers
     # ------------------------------------------------------------------
-    def _update_lang_code(self, combo, langs):
-        sel = combo.get()
-        for name, code in langs:
+    def _on_lang_selected(self, event=None):
+        sel = self._lang_combo.get()
+        for name, code in self._langs:
             if f"{name} ({code})" == sel:
                 self._lang_var.set(code)
                 break
@@ -987,10 +987,13 @@ class EBAProtokollApp(tk.Tk):
             return
 
         # Read all tkinter vars on main thread before launching worker (thread safety)
+        lang = self._lang_var.get()
+        if len(lang) > 3 or not lang.isalpha():
+            lang = "de"  # fallback if combobox corrupted the code
         worker_args = {
             "hf_token": hf_token,
             "model": self._model_var.get(),
-            "language": self._lang_var.get(),
+            "language": lang,
             "base_dir": self._dir_var.get().strip() or DEFAULT_CONFIG["output_dir"],
             "project": self._project_var.get().strip() or "Besprechung",
             "mic_path": self._last_mic_path,
