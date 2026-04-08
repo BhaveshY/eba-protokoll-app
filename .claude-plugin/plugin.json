@@ -1,0 +1,7 @@
+{
+  "name": "eba-protokoll",
+  "description": "Creates structured legal and working protocols from EBA meeting transcripts. Generates legally bindable formatted conversation records and actionable working summaries with insights.",
+  "author": {
+    "name": "EBA Architekten"
+  }
+}
