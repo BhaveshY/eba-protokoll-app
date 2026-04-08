@@ -13,9 +13,11 @@ Target hardware: Ryzen CPU + NVIDIA GTX GPU (Windows 11)
 
 import gc
 import json
+import logging
 import os
 import subprocess
 import time
+import traceback
 import wave
 import struct
 import threading
@@ -23,6 +25,19 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from datetime import datetime
 from pathlib import Path
+
+logging.basicConfig(
+    filename=os.path.join(os.path.dirname(os.path.abspath(__file__)), "eba_debug.log"),
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+# ---------------------------------------------------------------------------
+# Ensure FFmpeg is on PATH (user env var may not be inherited by this process)
+# ---------------------------------------------------------------------------
+_FFMPEG_DIR = r"C:\ffmpeg\bin"
+if os.path.isdir(_FFMPEG_DIR) and _FFMPEG_DIR not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _FFMPEG_DIR + ";" + os.environ.get("PATH", "")
 
 # ---------------------------------------------------------------------------
 # Configuration helpers
@@ -306,11 +321,18 @@ def get_gpu_info() -> dict:
 
 
 def _load_audio_safe(filepath: str):
-    """Load audio as numpy array, with torchaudio fallback for Windows TorchCodec DLL issues."""
-    import whisperx
+    """Load audio as numpy array, with multiple fallbacks for Windows compatibility."""
+    import numpy as np
+
+    # 1) whisperx (uses ffmpeg subprocess)
     try:
+        import whisperx
         return whisperx.load_audio(filepath)
     except Exception:
+        pass
+
+    # 2) torchaudio
+    try:
         import torchaudio
         waveform, sample_rate = torchaudio.load(filepath)
         if sample_rate != 16000:
@@ -318,6 +340,32 @@ def _load_audio_safe(filepath: str):
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
         return waveform.squeeze().numpy()
+    except Exception:
+        pass
+
+    # 3) stdlib wave module (WAV files only, always available)
+    with wave.open(filepath, "rb") as wf:
+        n_channels = wf.getnchannels()
+        sampwidth = wf.getsampwidth()
+        sample_rate = wf.getframerate()
+        raw = wf.readframes(wf.getnframes())
+
+    if sampwidth == 2:
+        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif sampwidth == 4:
+        samples = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+    else:
+        samples = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
+
+    if n_channels > 1:
+        samples = samples.reshape(-1, n_channels).mean(axis=1)
+
+    if sample_rate != 16000:
+        import scipy.signal
+        num_samples = int(len(samples) * 16000 / sample_rate)
+        samples = scipy.signal.resample(samples, num_samples)
+
+    return samples.astype(np.float32)
 
 
 def _reduce_noise(audio, sr: int = 16000):
@@ -330,7 +378,7 @@ def _reduce_noise(audio, sr: int = 16000):
         stationary=False,
         prop_decrease=0.85,
         n_fft=512,
-        n_jobs=-1,
+        n_jobs=1,
     )
 
 
@@ -1091,6 +1139,7 @@ class EBAProtokollApp(tk.Tk):
             self._finish_transcription(all_segments, out_path)
 
         except Exception as exc:
+            logging.error("Transcription error:\n%s", traceback.format_exc())
             self._set_status(f"Fehler: {exc}")
             self._finish_transcription([])
 
