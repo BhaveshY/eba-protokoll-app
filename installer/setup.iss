@@ -37,7 +37,7 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-german.WelcomeLabel2=Dieses Programm installiert [name/ver] auf Ihrem Computer.%n%nDie Installation umfasst:%n- Python (falls nicht vorhanden)%n- PyTorch mit CUDA-GPU-Beschleunigung%n- WhisperX Spracherkennung%n- Sprechererkennung (pyannote)%n%nBenoetigter Speicherplatz: ca. 4 GB%nInternetverbindung erforderlich.
+german.WelcomeLabel2=Dieses Programm installiert [name/ver] auf Ihrem Computer.%n%nDie Installation umfasst:%n- Python (falls nicht vorhanden)%n- PyTorch mit CUDA-GPU-Beschleunigung%n- Parakeet TDT Spracherkennung%n- Sprechererkennung (pyannote)%n%nBenoetigter Speicherplatz: ca. 4 GB%nInternetverbindung erforderlich.
 
 [Files]
 ; App files
@@ -63,7 +63,7 @@ Name: "{group}\{#AppName} deinstallieren"; Filename: "{uninstallexe}"
 ; Run the dependency installer after file copy
 Filename: "powershell.exe"; \
     Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\install_deps.ps1"" -InstallDir ""{app}""{code:GetTokenParam}"; \
-    StatusMsg: "Installiere Abhaengigkeiten (PyTorch, WhisperX, ...) - dies dauert ca. 5-15 Minuten..."; \
+    StatusMsg: "Installiere Abhaengigkeiten (PyTorch, NeMo ASR, ...) - dies dauert ca. 5-15 Minuten..."; \
     Flags: waituntilterminated; \
     Description: "Abhaengigkeiten installieren"
 
@@ -116,7 +116,7 @@ begin
   Result := Result + 'Folgende Komponenten werden installiert:' + NewLine;
   Result := Result + Space + 'Python 3.12 (falls nicht vorhanden)' + NewLine;
   Result := Result + Space + 'PyTorch mit CUDA-Unterstuetzung' + NewLine;
-  Result := Result + Space + 'WhisperX Spracherkennung' + NewLine;
+  Result := Result + Space + 'Parakeet TDT Spracherkennung' + NewLine;
   Result := Result + Space + 'pyannote Sprechererkennung' + NewLine + NewLine;
 
   Result := Result + 'Geschaetzter Download: ca. 3-4 GB' + NewLine;

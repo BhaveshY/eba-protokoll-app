@@ -21,7 +21,7 @@
    - Checks for FFmpeg on PATH
    - Creates a Python virtual environment
    - Installs PyTorch with CUDA support (~2.5 GB)
-   - Installs WhisperX and all dependencies
+   - Installs NeMo ASR (Parakeet TDT) and all dependencies
    - Verifies CUDA availability
    - Creates config.json (preserves existing)
 4. Creates desktop and Start Menu shortcuts

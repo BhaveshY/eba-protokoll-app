@@ -4,7 +4,7 @@ setlocal EnableDelayedExpansion
 
 :: ============================================================================
 ::  EBA Protokoll - Installer
-::  Sitzungsaufnahme + Transkription mit WhisperX 3.8+ und pyannote-audio v4
+::  Sitzungsaufnahme + Transkription mit NVIDIA Parakeet TDT v3 und pyannote-audio
 :: ============================================================================
 
 title EBA Protokoll - Installation
@@ -26,7 +26,7 @@ echo   EBA Protokoll - Installationsprogramm
 echo  ============================================================
 echo.
 echo   Dieses Script installiert die EBA Protokoll-Anwendung
-echo   mit WhisperX, Sprechererkennung und CUDA-Unterstuetzung.
+echo   mit Parakeet TDT, Sprechererkennung und CUDA-Unterstuetzung.
 echo.
 echo   Installationsverzeichnis: %INSTALL_DIR%
 echo  ============================================================
@@ -64,14 +64,14 @@ for /f "tokens=1,2 delims=." %%a in ("%PYTHON_VER%") do (
 
 if !PY_MAJOR! lss 3 (
     echo  FEHLER: Python !PY_MAJOR!.!PY_MINOR! ist zu alt.
-    echo  pyannote-audio v4 und WhisperX 3.8+ erfordern Python 3.10 oder hoeher.
+    echo  NeMo ASR und pyannote-audio erfordern Python 3.10 oder hoeher.
     echo  Bitte installieren Sie Python 3.12: https://www.python.org/downloads/
     echo.
     goto :error_exit
 )
 if !PY_MAJOR! equ 3 if !PY_MINOR! lss 10 (
     echo  FEHLER: Python !PY_MAJOR!.!PY_MINOR! ist zu alt.
-    echo  pyannote-audio v4 und WhisperX 3.8+ erfordern Python 3.10 oder hoeher.
+    echo  NeMo ASR und pyannote-audio erfordern Python 3.10 oder hoeher.
     echo  Bitte installieren Sie Python 3.12: https://www.python.org/downloads/
     echo.
     goto :error_exit
@@ -201,11 +201,11 @@ if %ERRORLEVEL% neq 0 (
 echo.
 
 :: ============================================================================
-:: [5/10] PyTorch mit CUDA installieren (KRITISCH - VOR whisperx!)
+:: [5/10] PyTorch mit CUDA installieren (KRITISCH - VOR nemo_toolkit!)
 :: ============================================================================
 echo [5/%TOTAL_STEPS%] Installiere PyTorch mit CUDA-Unterstuetzung...
 echo.
-echo   WICHTIG: PyTorch wird VOR WhisperX installiert, um CUDA-Unterstuetzung
+echo   WICHTIG: PyTorch wird VOR NeMo installiert, um CUDA-Unterstuetzung
 echo   sicherzustellen. (Bekanntes Problem: pyannote #1675)
 echo.
 echo   Dies kann einige Minuten dauern...
@@ -231,15 +231,15 @@ echo   PyTorch mit CUDA installiert - OK
 echo.
 
 :: ============================================================================
-:: [6/10] WhisperX und weitere Abhaengigkeiten installieren
+:: [6/10] NeMo ASR und weitere Abhaengigkeiten installieren
 :: ============================================================================
-echo [6/%TOTAL_STEPS%] Installiere WhisperX und Abhaengigkeiten...
+echo [6/%TOTAL_STEPS%] Installiere NeMo ASR und Abhaengigkeiten...
 echo.
-echo   whisperx installiert automatisch: faster-whisper, pyannote-audio v4, etc.
+echo   nemo_toolkit[asr] installiert automatisch alle ASR-Abhaengigkeiten.
 echo   Dies kann einige Minuten dauern...
 echo.
 
-pip install whisperx sounddevice numpy PyAudioWPatch noisereduce
+pip install "nemo_toolkit[asr]" pyannote.audio sounddevice numpy scipy PyAudioWPatch noisereduce
 if %ERRORLEVEL% neq 0 (
     echo.
     echo  FEHLER: Installation der Abhaengigkeiten fehlgeschlagen!
@@ -252,7 +252,7 @@ if %ERRORLEVEL% neq 0 (
     goto :error_exit
 )
 
-:: Sicherheitscheck: CUDA darf nicht durch whisperx-Abhaengigkeiten entfernt worden sein
+:: Sicherheitscheck: CUDA darf nicht durch nemo-Abhaengigkeiten entfernt worden sein
 python -c "import torch; assert torch.cuda.is_available(), 'CUDA lost'" >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo   WARNUNG: CUDA wurde durch Abhaengigkeiten ueberschrieben. Repariere...
@@ -264,7 +264,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
-echo   WhisperX und Abhaengigkeiten installiert - OK
+echo   NeMo ASR und Abhaengigkeiten installiert - OK
 echo.
 
 :: ============================================================================
@@ -335,7 +335,7 @@ if not exist "%INSTALL_DIR%\config.json" (
     (
     echo {
     echo   "hf_token": "!HF_TOKEN!",
-    echo   "whisper_model": "small",
+    echo   "asr_model": "nvidia/parakeet-tdt-0.6b-v3",
     echo   "language": "de",
     echo   "speaker_names": {},
     echo   "output_dir": "C:\\EBA-Protokoll",
@@ -363,15 +363,15 @@ echo.
 :: ============================================================================
 :: [9/10] Modelle herunterladen
 :: ============================================================================
-echo [9/%TOTAL_STEPS%] Lade Whisper-Modell herunter (small, deutsch)...
+echo [9/%TOTAL_STEPS%] Lade Parakeet ASR-Modell herunter (~1.2 GB)...
 echo.
 echo   Der erste Download kann einige Minuten dauern...
 echo.
 
-python -c "import whisperx; print('  Lade Whisper \"small\" Modell...'); whisperx.load_model('small', 'cpu', language='de', compute_type='float32'); print('  Whisper-Modell geladen - OK')"
+python -c "import nemo.collections.asr as nemo_asr; print('  Lade Parakeet TDT 0.6b v3...'); nemo_asr.models.ASRModel.from_pretrained('nvidia/parakeet-tdt-0.6b-v3'); print('  ASR-Modell geladen - OK')"
 if %ERRORLEVEL% neq 0 (
     echo.
-    echo  WARNUNG: Whisper-Modell konnte nicht heruntergeladen werden.
+    echo  WARNUNG: Parakeet ASR-Modell konnte nicht heruntergeladen werden.
     echo  Das Modell wird beim ersten Start der Anwendung geladen.
     echo.
 ) else (
@@ -381,7 +381,7 @@ if %ERRORLEVEL% neq 0 (
 if not "!HF_TOKEN!"=="" (
     echo   Teste Sprechererkennungs-Modell...
     echo.
-    python -c "from whisperx.diarize import DiarizationPipeline; print('  Lade Diarization-Pipeline...'); DiarizationPipeline(token='!HF_TOKEN!', device='cpu'); print('  Sprechererkennungs-Modell geladen - OK')"
+    python -c "from pyannote.audio import Pipeline; print('  Lade Diarization-Pipeline...'); Pipeline.from_pretrained('pyannote/speaker-diarization-3.1', use_auth_token='!HF_TOKEN!'); print('  Sprechererkennungs-Modell geladen - OK')"
     if !ERRORLEVEL! neq 0 (
         echo.
         echo  WARNUNG: Sprechererkennungs-Modell konnte nicht geladen werden.

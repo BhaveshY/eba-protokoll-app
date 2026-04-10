@@ -3,12 +3,13 @@ EBA Protokoll App
 ==================
 Windows 11 tkinter application for recording virtual meetings with
 speaker diarization. Records mic + system audio (WASAPI loopback)
-as separate tracks, then transcribes and diarizes using WhisperX.
+as separate tracks, then transcribes using NVIDIA Parakeet TDT v3
+and diarizes using pyannote.audio.
 
 Requires:
-    pip install whisperx torch torchaudio sounddevice PyAudioWPatch numpy
+    pip install nemo_toolkit[asr] pyannote.audio torch torchaudio sounddevice PyAudioWPatch numpy
 
-Target hardware: Ryzen CPU + NVIDIA GTX GPU (Windows 11)
+Target hardware: CPU + NVIDIA GPU (Windows 11)
 """
 
 import gc
@@ -66,7 +67,7 @@ CONFIG_PATH = APP_DIR / "config.json"
 
 DEFAULT_CONFIG = {
     "hf_token": "",
-    "whisper_model": "small",
+    "asr_model": "nvidia/parakeet-tdt-0.6b-v3",
     "language": "de",
     "speaker_names": {},
     "output_dir": r"C:\EBA-Protokoll",
@@ -357,14 +358,7 @@ def _load_audio_safe(filepath: str):
     """Load audio as numpy array, with multiple fallbacks for Windows compatibility."""
     import numpy as np
 
-    # 1) whisperx (uses ffmpeg subprocess)
-    try:
-        import whisperx
-        return whisperx.load_audio(filepath)
-    except Exception:
-        pass
-
-    # 2) torchaudio
+    # 1) torchaudio
     try:
         import torchaudio
         waveform, sample_rate = torchaudio.load(filepath)
@@ -428,54 +422,92 @@ def _reduce_noise(audio, sr: int = 16000):
     )
 
 
-def _extract_segments(result: dict, speaker_label: str = None) -> list[dict]:
-    """Extract segment dicts from whisperx result. If speaker_label is set, override all speakers."""
-    return [
-        {
-            "start": seg.get("start", 0.0),
-            "end": seg.get("end", 0.0),
-            "speaker": speaker_label or seg.get("speaker", "Unbekannt"),
-            "text": seg.get("text", "").strip(),
-        }
-        for seg in result.get("segments", [])
-        if seg.get("text", "").strip()
+def _extract_segments_from_hypothesis(hypothesis, speaker_label: str = None) -> list[dict]:
+    """Extract segment dicts from a NeMo Hypothesis object.
+    Uses timestamp['segment'] for sentence-level segments with native TDT timestamps.
+    If speaker_label is set, override all speakers."""
+    segments = []
+    ts = getattr(hypothesis, "timestamp", None)
+    if ts and "segment" in ts:
+        for seg in ts["segment"]:
+            text = seg.get("segment", "").strip()
+            if text:
+                segments.append({
+                    "start": seg.get("start", 0.0),
+                    "end": seg.get("end", 0.0),
+                    "speaker": speaker_label or "Unbekannt",
+                    "text": text,
+                })
+    elif hypothesis.text and hypothesis.text.strip():
+        # Fallback: no timestamps available, use full text as single segment
+        segments.append({
+            "start": 0.0,
+            "end": 0.0,
+            "speaker": speaker_label or "Unbekannt",
+            "text": hypothesis.text.strip(),
+        })
+    return segments
+
+
+def _assign_speakers_to_segments(diarization, segments: list[dict]) -> list[dict]:
+    """Assign pyannote speaker labels to transcription segments by maximum time overlap.
+
+    diarization: pyannote Annotation object from Pipeline.__call__()
+    segments: list of {"start", "end", "speaker", "text"} dicts from NeMo
+
+    Returns the same segments with "speaker" field updated."""
+    dia_turns = [
+        (turn.start, turn.end, speaker)
+        for turn, _, speaker in diarization.itertracks(yield_label=True)
     ]
+    for seg in segments:
+        seg_start, seg_end = seg["start"], seg["end"]
+        best_speaker = "Unbekannt"
+        best_overlap = 0.0
+        for d_start, d_end, d_speaker in dia_turns:
+            overlap = max(0.0, min(seg_end, d_end) - max(seg_start, d_start))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_speaker = d_speaker
+        seg["speaker"] = best_speaker
+    return segments
 
 
-def _get_batch_size(device: str) -> int:
-    """Choose transcription batch size based on available VRAM."""
-    if device != "cuda":
-        return 8
-    try:
-        import torch
-        vram = torch.cuda.get_device_properties(0).total_memory / 1024 / 1024
-        if vram < 4500:
-            return 4
-        if vram < 6500:
-            return 8
-        return 16
-    except Exception:
-        return 8
+_asr_cache = {"key": None, "model": None}
 
 
-_whisper_cache = {"key": None, "model": None}
+def _save_audio_to_tempfile(audio, sr: int = 16000) -> str:
+    """Save numpy audio to a temporary WAV file for NeMo file-based transcription.
+    This enables NeMo's internal buffered inference for long audio (>24 min)."""
+    import tempfile
+    import numpy as np
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp.close()
+    samples = (audio * 32767).clip(-32768, 32767).astype(np.int16)
+    with wave.open(tmp.name, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(samples.tobytes())
+    return tmp.name
 
 
 def transcribe_and_diarize(
     mic_path: str,
     system_path: str,
-    whisper_model_name: str,
+    asr_model_name: str,
     language: str,
     hf_token: str,
     progress_callback=None,
     cancel_event: threading.Event = None,
     noise_reduction: bool = True,
 ) -> list[dict]:
-    """Transcribe mic + system tracks using shared models. Returns merged, sorted segments.
-    Checks cancel_event between stages. On diarization failure, returns transcript without speaker labels."""
-    import whisperx
+    """Transcribe mic + system tracks using Parakeet TDT + pyannote diarization.
+    Returns merged, sorted segments. Checks cancel_event between stages.
+    On diarization failure, returns transcript without speaker labels."""
     import torch
-    from whisperx.diarize import DiarizationPipeline, assign_word_speakers
+    import nemo.collections.asr as nemo_asr
+    from pyannote.audio import Pipeline as DiarizationPipeline
 
     def status(msg, pct=-1):
         if progress_callback:
@@ -485,38 +517,32 @@ def transcribe_and_diarize(
         return cancel_event is not None and cancel_event.is_set()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    compute_type = "int8" if device == "cuda" else "float32"
-    batch_size = _get_batch_size(device)
 
-    # --- Load or reuse cached Whisper model ---
-    cache_key = (whisper_model_name, device, language, compute_type)
-    if _whisper_cache["key"] == cache_key and _whisper_cache["model"] is not None:
-        status("Whisper-Modell aus Cache...", 3)
-        model = _whisper_cache["model"]
+    # --- Load or reuse cached Parakeet model ---
+    cache_key = (asr_model_name, device)
+    if _asr_cache["key"] == cache_key and _asr_cache["model"] is not None:
+        status("ASR-Modell aus Cache...", 3)
+        asr_model = _asr_cache["model"]
     else:
-        if _whisper_cache["model"] is not None:
-            del _whisper_cache["model"]
-            _whisper_cache["model"] = None
-            _whisper_cache["key"] = None
+        if _asr_cache["model"] is not None:
+            del _asr_cache["model"]
+            _asr_cache["model"] = None
+            _asr_cache["key"] = None
             gc.collect()
             if device == "cuda":
                 torch.cuda.empty_cache()
-        status("Lade Whisper-Modell...", 0)
-        model = whisperx.load_model(whisper_model_name, device, language=language, compute_type=compute_type)
-        _whisper_cache["model"] = model
-        _whisper_cache["key"] = cache_key
+        status("Lade Parakeet ASR-Modell...", 0)
+        asr_model = nemo_asr.models.ASRModel.from_pretrained(asr_model_name)
+        if device == "cuda":
+            asr_model = asr_model.to(device="cuda", dtype=torch.float16)
+        else:
+            asr_model = asr_model.to(device="cpu")
+        asr_model.eval()
+        _asr_cache["model"] = asr_model
+        _asr_cache["key"] = cache_key
 
     if cancelled():
         return []
-
-    # --- Lazy-load alignment model (only when needed) ---
-    align_model = align_metadata = None
-
-    def ensure_align_model():
-        nonlocal align_model, align_metadata
-        if align_model is None:
-            status("Lade Alignment-Modell...", 8)
-            align_model, align_metadata = whisperx.load_align_model(language_code=language, device=device)
 
     all_segments = []
 
@@ -529,13 +555,14 @@ def transcribe_and_diarize(
             mic_audio = _reduce_noise(mic_audio)
 
         status("Transkribiere Mikrofon...", 17)
-        mic_result = model.transcribe(mic_audio, batch_size=batch_size)
-
-        if mic_result["segments"]:
-            ensure_align_model()
-            status("Zeitstempel-Ausrichtung (Mikrofon)...", 37)
-            mic_result = whisperx.align(mic_result["segments"], align_model, align_metadata, mic_audio, device)
-            all_segments.extend(_extract_segments(mic_result, speaker_label="Ich"))
+        # Save to temp file for NeMo's buffered inference (handles long audio)
+        tmp_mic = _save_audio_to_tempfile(mic_audio)
+        try:
+            hypotheses = asr_model.transcribe([tmp_mic], timestamps=True)
+            if hypotheses and hypotheses[0].text.strip():
+                all_segments.extend(_extract_segments_from_hypothesis(hypotheses[0], speaker_label="Ich"))
+        finally:
+            os.unlink(tmp_mic)
 
         del mic_audio
 
@@ -548,17 +575,20 @@ def transcribe_and_diarize(
             sys_audio = _reduce_noise(sys_audio)
 
         status("Transkribiere System-Audio...", 49)
-        sys_result = model.transcribe(sys_audio, batch_size=batch_size)
+        tmp_sys = _save_audio_to_tempfile(sys_audio)
+        sys_segments = []
+        try:
+            hypotheses = asr_model.transcribe([tmp_sys], timestamps=True)
+            if hypotheses and hypotheses[0].text.strip():
+                sys_segments = _extract_segments_from_hypothesis(hypotheses[0])
+        finally:
+            os.unlink(tmp_sys)
 
-        if sys_result["segments"]:
-            ensure_align_model()
-            status("Zeitstempel-Ausrichtung (System)...", 69)
-            sys_result = whisperx.align(sys_result["segments"], align_model, align_metadata, sys_audio, device)
-
-            # Free whisper + alignment models before loading diarization (saves ~2GB VRAM)
-            _whisper_cache["model"] = None
-            _whisper_cache["key"] = None
-            del model, align_model, align_metadata
+        if sys_segments:
+            # Free ASR model before loading diarization (saves ~1.5GB VRAM)
+            _asr_cache["model"] = None
+            _asr_cache["key"] = None
+            del asr_model
             gc.collect()
             if device == "cuda":
                 torch.cuda.empty_cache()
@@ -566,24 +596,30 @@ def transcribe_and_diarize(
             if not cancelled():
                 status("Sprechererkennung (Diarisierung)...", 74)
                 try:
-                    diarize_pipeline = DiarizationPipeline(token=hf_token, device=device)
+                    diarize_pipeline = DiarizationPipeline.from_pretrained(
+                        "pyannote/speaker-diarization-3.1",
+                        use_auth_token=hf_token,
+                    )
+                    diarize_pipeline.to(torch.device(device))
 
-                    # Reduce batch sizes — pyannote default=32 causes OOM/37x slowdown on GTX GPUs
-                    pipe = diarize_pipeline.model
-                    if hasattr(pipe, 'embedding_batch_size'):
-                        pipe.embedding_batch_size = 8
-                    if hasattr(pipe, 'segmentation_batch_size'):
-                        pipe.segmentation_batch_size = 8
+                    # Reduce batch sizes — pyannote default=32 causes OOM/slowdown on GTX GPUs
+                    if hasattr(diarize_pipeline, 'embedding_batch_size'):
+                        diarize_pipeline.embedding_batch_size = 8
+                    if hasattr(diarize_pipeline, 'segmentation_batch_size'):
+                        diarize_pipeline.segmentation_batch_size = 8
                     # Re-enable TF32 — pyannote disables it, losing 10-15% GPU speed
                     if device == "cuda":
                         torch.backends.cuda.matmul.allow_tf32 = True
 
                     try:
-                        diarize_segments = diarize_pipeline(sys_audio, min_speakers=1, max_speakers=10)
+                        diarization = diarize_pipeline(
+                            {"waveform": torch.from_numpy(sys_audio).unsqueeze(0).float(), "sample_rate": 16000},
+                            min_speakers=1, max_speakers=10,
+                        )
                     except (OSError, RuntimeError, ImportError, AttributeError):
-                        diarize_segments = diarize_pipeline(system_path, min_speakers=1, max_speakers=10)
+                        diarization = diarize_pipeline(system_path, min_speakers=1, max_speakers=10)
 
-                    sys_result = assign_word_speakers(diarize_segments, sys_result)
+                    sys_segments = _assign_speakers_to_segments(diarization, sys_segments)
 
                     del diarize_pipeline
                     gc.collect()
@@ -592,7 +628,7 @@ def transcribe_and_diarize(
                 except Exception as exc:
                     status(f"Sprechererkennung fehlgeschlagen ({exc}) -- Transkript ohne Sprecherzuordnung.")
 
-            all_segments.extend(_extract_segments(sys_result))
+            all_segments.extend(sys_segments)
 
         del sys_audio
 
@@ -857,18 +893,15 @@ class EBAProtokollApp(tk.Tk):
             fill="x"
         )
 
-        # Whisper model
-        model_frame = ttk.LabelFrame(tab, text="Whisper Modell", padding=6)
+        # ASR model info
+        model_frame = ttk.LabelFrame(tab, text="ASR-Modell", padding=6)
         model_frame.pack(fill="x", pady=(0, 8))
 
-        self._model_var = tk.StringVar(
-            value=self.config_data.get("whisper_model", "small")
-        )
-        models = ["tiny", "base", "small", "medium", "large"]
-        combo = ttk.Combobox(
-            model_frame, textvariable=self._model_var, values=models, state="readonly"
-        )
-        combo.pack(fill="x")
+        ttk.Label(
+            model_frame,
+            text="NVIDIA Parakeet TDT 0.6b v3 (600M Parameter, 25 Sprachen)",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w")
 
         # Language
         lang_frame = ttk.LabelFrame(tab, text="Sprache", padding=6)
@@ -952,7 +985,6 @@ class EBAProtokollApp(tk.Tk):
 
     def _sync_config_from_ui(self) -> None:
         self.config_data["hf_token"] = self._token_var.get().strip()
-        self.config_data["whisper_model"] = self._model_var.get()
         self.config_data["language"] = self._lang_var.get()
         self.config_data["output_dir"] = self._dir_var.get().strip()
         self.config_data["noise_reduction"] = self._nr_var.get()
@@ -1126,7 +1158,7 @@ class EBAProtokollApp(tk.Tk):
             lang = "de"  # fallback if combobox corrupted the code
         worker_args = {
             "hf_token": hf_token,
-            "model": self._model_var.get(),
+            "model": self.config_data.get("asr_model", "nvidia/parakeet-tdt-0.6b-v3"),
             "language": lang,
             "base_dir": self._dir_var.get().strip() or DEFAULT_CONFIG["output_dir"],
             "project": self._project_var.get().strip() or "Besprechung",
@@ -1166,7 +1198,7 @@ class EBAProtokollApp(tk.Tk):
             all_segments = transcribe_and_diarize(
                 mic_path=args["mic_path"],
                 system_path=sys_path,
-                whisper_model_name=args["model"],
+                asr_model_name=args["model"],
                 language=args["language"],
                 hf_token=args["hf_token"],
                 progress_callback=self._set_status,

@@ -11,7 +11,7 @@ Meeting-Protokoll.
 
 Alle Daten bleiben lokal auf dem Rechner. Es werden keine Audio- oder Textdaten
 ins Internet uebertragen. Die Transkription laeuft GPU-beschleunigt ueber
-WhisperX 3.8+ mit NVIDIA CUDA.
+NVIDIA Parakeet TDT v3 mit CUDA.
 
 
 ## Voraussetzungen
@@ -77,7 +77,7 @@ akzeptiert werden.
 2. Die Installation dauert ca. 5-15 Minuten (abhaengig von der Internetverbindung).
 3. Es werden automatisch installiert:
    - PyTorch mit CUDA-Unterstuetzung
-   - WhisperX und alle Abhaengigkeiten
+   - NeMo ASR (Parakeet TDT) und alle Abhaengigkeiten
    - Weitere benoetigte Pakete
 
 Hinweis: PyTorch mit CUDA wird separat VOR den anderen Paketen installiert.
@@ -111,7 +111,7 @@ Beim ersten Start die Einstellungen oeffnen und konfigurieren:
 2. Die Verarbeitung dauert einige Minuten, abhaengig von der Laenge der Aufnahme
    und dem gewaehlten Modell.
 3. Waehrend der Transkription werden folgende Schritte ausgefuehrt:
-   - Spracherkennung (Speech-to-Text via WhisperX)
+   - Spracherkennung (Speech-to-Text via NVIDIA Parakeet TDT v3)
    - Wort-Alignment (genaue Zeitstempel pro Wort)
    - Sprechererkennung (wer hat wann gesprochen)
 
@@ -161,7 +161,7 @@ Siehe `COWORK_PLUGIN_SETUP.md` fuer die Einrichtung des Cowork-Plugins.
 
 ## Technische Details
 
-- **Transkription**: WhisperX 3.8+ (basierend auf faster-whisper + pyannote community-1)
+- **Transkription**: NVIDIA Parakeet TDT v3 (600M Parameter, 25 europaeische Sprachen)
 - **Sprechererkennung**: pyannote-audio v4, Modell: speaker-diarization-community-1
 - **Audio-Aufnahme**: Mikrofon (Standard-Eingabegeraet) + WASAPI Loopback (System-Audio)
 - **Datenschutz**: Laeuft komplett lokal -- keine Audio- oder Textdaten werden ins Internet uebertragen

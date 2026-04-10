@@ -1,6 +1,6 @@
 # ============================================================================
 #  EBA Protokoll - Dependency Installer (called by Inno Setup post-install)
-#  Installs Python venv, PyTorch+CUDA, WhisperX, and downloads Whisper model.
+#  Installs Python venv, PyTorch+CUDA, NeMo ASR (Parakeet TDT), and downloads models.
 # ============================================================================
 
 param(
@@ -133,16 +133,16 @@ Write-Host "  Dies kann einige Minuten dauern (ca. 2-3 GB Download)..."
 }
 
 # --------------------------------------------------------------------------
-# 6. Install WhisperX and dependencies
+# 6. Install NeMo ASR and dependencies
 # --------------------------------------------------------------------------
-Write-Step 6 $TOTAL "Installiere WhisperX und Abhaengigkeiten..."
+Write-Step 6 $TOTAL "Installiere NeMo ASR und Abhaengigkeiten..."
 Write-Host "  Dies kann einige Minuten dauern..."
 
-& $pipExe install whisperx sounddevice numpy scipy PyAudioWPatch noisereduce 2>&1 | ForEach-Object {
+& $pipExe install "nemo_toolkit[asr]" pyannote.audio sounddevice numpy scipy PyAudioWPatch noisereduce 2>&1 | ForEach-Object {
     if ($_ -match "^(Downloading|Installing|Successfully)") { Write-Host "  $_" }
 }
 
-# Check if CUDA was overwritten by whisperx deps
+# Check if CUDA was overwritten by nemo deps
 $cudaCheck = & $venvPython -c "import torch; print(torch.cuda.is_available())" 2>&1
 if ($cudaCheck -ne "True") {
     Write-Host "  CUDA wurde ueberschrieben. Repariere..." -ForegroundColor Yellow
@@ -158,7 +158,7 @@ $configPath = Join-Path $InstallDir "config.json"
 if (-not (Test-Path $configPath)) {
     $config = @{
         hf_token        = $HFToken
-        whisper_model   = "small"
+        asr_model       = "nvidia/parakeet-tdt-0.6b-v3"
         language        = "de"
         speaker_names   = @{}
         output_dir      = $InstallDir
@@ -183,10 +183,10 @@ print(f"  CUDA: {cuda}")
 if cuda:
     print(f"  GPU: {torch.cuda.get_device_name(0)}")
 try:
-    import whisperx
-    print(f"  WhisperX: OK")
+    import nemo.collections.asr
+    print(f"  NeMo ASR: OK")
 except:
-    print(f"  WhisperX: FEHLER")
+    print(f"  NeMo ASR: FEHLER")
 "@
 
 & $venvPython -c $verifyScript 2>&1
