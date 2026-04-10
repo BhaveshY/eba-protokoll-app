@@ -67,7 +67,7 @@ CONFIG_PATH = APP_DIR / "config.json"
 
 DEFAULT_CONFIG = {
     "hf_token": "",
-    "asr_model": "nvidia/parakeet-tdt-0.6b-v3",
+    "asr_model": "nemo-parakeet-tdt-0.6b-v3",
     "speaker_names": {},
     "output_dir": r"C:\EBA-Protokoll",
     "noise_reduction": True,
@@ -1141,7 +1141,7 @@ class EBAProtokollApp(tk.Tk):
         # Read all tkinter vars on main thread before launching worker (thread safety)
         worker_args = {
             "hf_token": hf_token,
-            "model": self.config_data.get("asr_model", "nvidia/parakeet-tdt-0.6b-v3"),
+            "model": self.config_data.get("asr_model", "nemo-parakeet-tdt-0.6b-v3"),
             "base_dir": self._dir_var.get().strip() or DEFAULT_CONFIG["output_dir"],
             "project": self._project_var.get().strip() or "Besprechung",
             "mic_path": self._last_mic_path,

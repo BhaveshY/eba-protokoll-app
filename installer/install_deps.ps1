@@ -143,6 +143,10 @@ $venvPython = Join-Path $venvDir "Scripts\python.exe"
 
 if (-not (Test-Path $venvDir)) {
     & $pythonExe -m venv $venvDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  FEHLER: Virtual Environment konnte nicht erstellt werden!" -ForegroundColor Red
+        exit 1
+    }
 }
 & $venvPython -m pip install --upgrade pip --quiet 2>&1 | Out-Null
 Write-Host "  Virtual Environment bereit."
@@ -156,6 +160,10 @@ Write-Host "  Dies kann einige Minuten dauern (ca. 2-3 GB Download)..."
 & $pipExe install torch torchaudio --index-url https://download.pytorch.org/whl/cu126 2>&1 | ForEach-Object {
     if ($_ -match "^(Downloading|Installing|Successfully)") { Write-Host "  $_" }
 }
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  FEHLER: PyTorch-Installation fehlgeschlagen!" -ForegroundColor Red
+    exit 1
+}
 
 # --------------------------------------------------------------------------
 # 6. Install onnx-asr and dependencies
@@ -165,6 +173,10 @@ Write-Host "  Dies kann einige Minuten dauern..."
 
 & $pipExe install "onnx-asr[gpu,hub]" "onnxruntime-gpu>=1.19" pyannote.audio sounddevice numpy scipy PyAudioWPatch noisereduce 2>&1 | ForEach-Object {
     if ($_ -match "^(Downloading|Installing|Successfully)") { Write-Host "  $_" }
+}
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  FEHLER: Abhaengigkeiten-Installation fehlgeschlagen!" -ForegroundColor Red
+    exit 1
 }
 
 # Check if CUDA was overwritten by dependencies
@@ -183,7 +195,7 @@ $configPath = Join-Path $InstallDir "config.json"
 if (-not (Test-Path $configPath)) {
     $config = @{
         hf_token        = $HFToken
-        asr_model       = "nvidia/parakeet-tdt-0.6b-v3"
+        asr_model       = "nemo-parakeet-tdt-0.6b-v3"
         speaker_names   = @{}
         output_dir      = $InstallDir
         noise_reduction = $true
@@ -199,7 +211,7 @@ if (-not (Test-Path $configPath)) {
 # --------------------------------------------------------------------------
 Write-Step 8 $TOTAL "Lade Parakeet ASR-Modell herunter (~640 MB)..."
 
-& $venvPython -c "import onnx_asr; print('  Lade Parakeet TDT 0.6b v3...'); onnx_asr.load_model('nvidia/parakeet-tdt-0.6b-v3'); print('  ASR-Modell geladen - OK')" 2>&1
+& $venvPython -c "import onnx_asr; print('  Lade Parakeet TDT 0.6b v3...'); onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3'); print('  ASR-Modell geladen - OK')" 2>&1
 
 # --------------------------------------------------------------------------
 # 9. Verify installation

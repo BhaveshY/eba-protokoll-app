@@ -335,7 +335,7 @@ if not exist "%INSTALL_DIR%\config.json" (
     (
     echo {
     echo   "hf_token": "!HF_TOKEN!",
-    echo   "asr_model": "nvidia/parakeet-tdt-0.6b-v3",
+    echo   "asr_model": "nemo-parakeet-tdt-0.6b-v3",
     echo   "speaker_names": {},
     echo   "output_dir": "C:\\EBA-Protokoll",
     echo   "noise_reduction": true
@@ -367,7 +367,7 @@ echo.
 echo   Der erste Download kann einige Minuten dauern...
 echo.
 
-python -c "import onnx_asr; print('  Lade Parakeet TDT 0.6b v3...'); onnx_asr.load_model('nvidia/parakeet-tdt-0.6b-v3'); print('  ASR-Modell geladen - OK')"
+python -c "import onnx_asr; print('  Lade Parakeet TDT 0.6b v3...'); onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3'); print('  ASR-Modell geladen - OK')"
 if %ERRORLEVEL% neq 0 (
     echo.
     echo  WARNUNG: Parakeet ASR-Modell konnte nicht heruntergeladen werden.
