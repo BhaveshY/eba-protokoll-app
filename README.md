@@ -77,7 +77,7 @@ akzeptiert werden.
 2. Die Installation dauert ca. 5-15 Minuten (abhaengig von der Internetverbindung).
 3. Es werden automatisch installiert:
    - PyTorch mit CUDA-Unterstuetzung
-   - NeMo ASR (Parakeet TDT) und alle Abhaengigkeiten
+   - onnx-asr (Parakeet TDT) und alle Abhaengigkeiten
    - Weitere benoetigte Pakete
 
 Hinweis: PyTorch mit CUDA wird separat VOR den anderen Paketen installiert.

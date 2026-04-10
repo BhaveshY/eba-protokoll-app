@@ -2,7 +2,8 @@
 #   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
 torch
 torchaudio
-nemo_toolkit[asr]
+onnx-asr[gpu,hub]
+onnxruntime-gpu>=1.19
 pyannote.audio>=3.1
 sounddevice
 numpy

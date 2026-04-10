@@ -7,7 +7,7 @@
 ; ============================================================================
 
 #define AppName "EBA Protokoll"
-#define AppVersion "1.0.0"
+#define AppVersion "2.0.0"
 #define AppPublisher "EBA"
 #define AppURL "https://github.com/BhaveshY/eba-protokoll-app"
 #define DefaultInstallDir "C:\EBA-Protokoll"
@@ -63,7 +63,7 @@ Name: "{group}\{#AppName} deinstallieren"; Filename: "{uninstallexe}"
 ; Run the dependency installer after file copy
 Filename: "powershell.exe"; \
     Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\install_deps.ps1"" -InstallDir ""{app}""{code:GetTokenParam}"; \
-    StatusMsg: "Installiere Abhaengigkeiten (PyTorch, NeMo ASR, ...) - dies dauert ca. 5-15 Minuten..."; \
+    StatusMsg: "Installiere Abhaengigkeiten (PyTorch, Parakeet ASR, ...) - dies dauert ca. 5-15 Minuten..."; \
     Flags: waituntilterminated; \
     Description: "Abhaengigkeiten installieren"
 

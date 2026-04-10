@@ -1,6 +1,6 @@
 # ============================================================================
 #  EBA Protokoll - Dependency Installer (called by Inno Setup post-install)
-#  Installs Python venv, PyTorch+CUDA, NeMo ASR (Parakeet TDT), and downloads models.
+#  Installs Python venv, PyTorch+CUDA, onnx-asr (Parakeet TDT), FFmpeg, and downloads models.
 # ============================================================================
 
 param(
@@ -15,7 +15,7 @@ function Write-Step($step, $total, $msg) {
     Write-Host "`n[$step/$total] $msg" -ForegroundColor Cyan
 }
 
-$TOTAL = 8
+$TOTAL = 9
 
 # --------------------------------------------------------------------------
 # 1. Find Python
@@ -59,12 +59,14 @@ if (-not $pythonExe) {
 }
 
 # --------------------------------------------------------------------------
-# 2. Check FFmpeg
+# 2. Install FFmpeg (auto-download if missing)
 # --------------------------------------------------------------------------
 Write-Step 2 $TOTAL "Pruefe FFmpeg..."
 
 $ffmpegFound = $false
+$ffmpegDir = Join-Path $InstallDir "ffmpeg\bin"
 $ffmpegPaths = @(
+    (Join-Path $ffmpegDir "ffmpeg.exe"),
     "C:\ffmpeg\bin\ffmpeg.exe",
     "$env:LOCALAPPDATA\Microsoft\WinGet\Links\ffmpeg.exe",
     "C:\ProgramData\chocolatey\bin\ffmpeg.exe"
@@ -82,19 +84,42 @@ if (-not $ffmpegFound) {
         if (Test-Path $fp) {
             $ffmpegFound = $true
             $ffmpegDir = Split-Path $fp
-            $env:Path += ";$ffmpegDir"
-            [System.Environment]::SetEnvironmentVariable("Path",
-                [System.Environment]::GetEnvironmentVariable("Path", "User") + ";$ffmpegDir", "User")
-            Write-Host "  FFmpeg gefunden: $fp"
             break
         }
     }
 }
 
 if (-not $ffmpegFound) {
-    Write-Host "  FFmpeg nicht gefunden. Bitte manuell installieren:" -ForegroundColor Yellow
-    Write-Host "    https://www.gyan.dev/ffmpeg/builds/" -ForegroundColor Yellow
-    Write-Host "    Entpacken nach C:\ffmpeg und C:\ffmpeg\bin zum PATH hinzufuegen." -ForegroundColor Yellow
+    Write-Host "  FFmpeg nicht gefunden. Lade herunter (~90 MB)..."
+    $ffmpegZip = Join-Path $env:TEMP "ffmpeg-essentials.zip"
+    $ffmpegExtract = Join-Path $env:TEMP "ffmpeg-extract"
+    try {
+        Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile $ffmpegZip
+        Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtract -Force
+        # The zip contains a versioned subfolder — find it
+        $innerDir = Get-ChildItem $ffmpegExtract -Directory | Select-Object -First 1
+        $ffmpegDest = Join-Path $InstallDir "ffmpeg"
+        if (Test-Path $ffmpegDest) { Remove-Item $ffmpegDest -Recurse -Force }
+        Move-Item (Join-Path $innerDir.FullName "bin") $ffmpegDest -Force
+        $ffmpegDir = $ffmpegDest
+        Write-Host "  FFmpeg installiert nach: $ffmpegDest"
+    } catch {
+        Write-Host "  FFmpeg-Download fehlgeschlagen: $_" -ForegroundColor Yellow
+        Write-Host "  Bitte manuell installieren: https://www.gyan.dev/ffmpeg/builds/" -ForegroundColor Yellow
+    } finally {
+        Remove-Item $ffmpegZip -ErrorAction SilentlyContinue
+        Remove-Item $ffmpegExtract -Recurse -ErrorAction SilentlyContinue
+    }
+}
+
+# Add FFmpeg to user PATH if not already there
+if ($ffmpegDir -and (Test-Path (Join-Path $ffmpegDir "ffmpeg.exe"))) {
+    $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    if ($userPath -notlike "*$ffmpegDir*") {
+        [System.Environment]::SetEnvironmentVariable("Path", "$userPath;$ffmpegDir", "User")
+        $env:Path += ";$ffmpegDir"
+        Write-Host "  FFmpeg zum PATH hinzugefuegt."
+    }
 }
 
 # --------------------------------------------------------------------------
@@ -133,16 +158,16 @@ Write-Host "  Dies kann einige Minuten dauern (ca. 2-3 GB Download)..."
 }
 
 # --------------------------------------------------------------------------
-# 6. Install NeMo ASR and dependencies
+# 6. Install onnx-asr and dependencies
 # --------------------------------------------------------------------------
-Write-Step 6 $TOTAL "Installiere NeMo ASR und Abhaengigkeiten..."
+Write-Step 6 $TOTAL "Installiere ASR und Abhaengigkeiten..."
 Write-Host "  Dies kann einige Minuten dauern..."
 
-& $pipExe install "nemo_toolkit[asr]" pyannote.audio sounddevice numpy scipy PyAudioWPatch noisereduce 2>&1 | ForEach-Object {
+& $pipExe install "onnx-asr[gpu,hub]" "onnxruntime-gpu>=1.19" pyannote.audio sounddevice numpy scipy PyAudioWPatch noisereduce 2>&1 | ForEach-Object {
     if ($_ -match "^(Downloading|Installing|Successfully)") { Write-Host "  $_" }
 }
 
-# Check if CUDA was overwritten by nemo deps
+# Check if CUDA was overwritten by dependencies
 $cudaCheck = & $venvPython -c "import torch; print(torch.cuda.is_available())" 2>&1
 if ($cudaCheck -ne "True") {
     Write-Host "  CUDA wurde ueberschrieben. Repariere..." -ForegroundColor Yellow
@@ -159,7 +184,6 @@ if (-not (Test-Path $configPath)) {
     $config = @{
         hf_token        = $HFToken
         asr_model       = "nvidia/parakeet-tdt-0.6b-v3"
-        language        = "de"
         speaker_names   = @{}
         output_dir      = $InstallDir
         noise_reduction = $true
@@ -171,9 +195,16 @@ if (-not (Test-Path $configPath)) {
 }
 
 # --------------------------------------------------------------------------
-# 8. Verify installation
+# 8. Pre-download ASR model
 # --------------------------------------------------------------------------
-Write-Step 8 $TOTAL "Verifiziere Installation..."
+Write-Step 8 $TOTAL "Lade Parakeet ASR-Modell herunter (~640 MB)..."
+
+& $venvPython -c "import onnx_asr; print('  Lade Parakeet TDT 0.6b v3...'); onnx_asr.load_model('nvidia/parakeet-tdt-0.6b-v3'); print('  ASR-Modell geladen - OK')" 2>&1
+
+# --------------------------------------------------------------------------
+# 9. Verify installation
+# --------------------------------------------------------------------------
+Write-Step 9 $TOTAL "Verifiziere Installation..."
 
 $verifyScript = @"
 import torch
@@ -183,10 +214,15 @@ print(f"  CUDA: {cuda}")
 if cuda:
     print(f"  GPU: {torch.cuda.get_device_name(0)}")
 try:
-    import nemo.collections.asr
-    print(f"  NeMo ASR: OK")
+    import onnx_asr
+    print(f"  onnx-asr: OK")
 except:
-    print(f"  NeMo ASR: FEHLER")
+    print(f"  onnx-asr: FEHLER")
+try:
+    import pyannote.audio
+    print(f"  pyannote: OK")
+except:
+    print(f"  pyannote: FEHLER")
 "@
 
 & $venvPython -c $verifyScript 2>&1
