@@ -370,7 +370,7 @@ def _load_audio_safe(filepath: str):
     except Exception:
         pass
 
-    # 3) stdlib wave module (WAV files only, always available)
+    # 2) stdlib wave module (WAV files only, always available)
     try:
         with wave.open(filepath, "rb") as wf:
             n_channels = wf.getnchannels()
@@ -418,7 +418,7 @@ def _reduce_noise(audio, sr: int = 16000):
         stationary=False,
         prop_decrease=0.85,
         n_fft=512,
-        n_jobs=1,
+        n_jobs=-1,  # use all CPU cores
     )
 
 
@@ -474,6 +474,7 @@ def _assign_speakers_to_segments(diarization, segments: list[dict]) -> list[dict
 
 
 _asr_cache = {"key": None, "model": None}
+_diarize_cache = {"key": None, "pipeline": None}
 
 
 def _save_audio_to_tempfile(audio, sr: int = 16000) -> str:
@@ -490,6 +491,15 @@ def _save_audio_to_tempfile(audio, sr: int = 16000) -> str:
         wf.setframerate(sr)
         wf.writeframes(samples.tobytes())
     return tmp.name
+
+
+def _prepare_audio_path(audio, original_path: str, noise_applied: bool) -> tuple:
+    """Return (path_for_nemo, needs_cleanup). Skips temp file when original is usable."""
+    if not noise_applied and original_path.lower().endswith(".wav"):
+        # Original WAV can be passed directly — NeMo handles resampling internally
+        return original_path, False
+    path = _save_audio_to_tempfile(audio)
+    return path, True
 
 
 def transcribe_and_diarize(
@@ -509,6 +519,10 @@ def transcribe_and_diarize(
     import nemo.collections.asr as nemo_asr
     from pyannote.audio import Pipeline as DiarizationPipeline
 
+    # Enable TF32 early — pyannote disables it later, so we re-enable before diarization
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+
     def status(msg, pct=-1):
         if progress_callback:
             progress_callback(msg, pct)
@@ -518,25 +532,74 @@ def transcribe_and_diarize(
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # --- Load or reuse cached Parakeet model ---
-    cache_key = (asr_model_name, device)
-    if _asr_cache["key"] == cache_key and _asr_cache["model"] is not None:
-        status("ASR-Modell aus Cache...", 3)
-        asr_model = _asr_cache["model"]
+    # --- Parallel noise reduction while model loads ---
+    has_mic = bool(mic_path) and os.path.exists(mic_path)
+    has_sys = bool(system_path) and os.path.exists(system_path)
+    mic_audio = sys_audio = None
+    nr_results = {}
+
+    if noise_reduction and (has_mic or has_sys) and not cancelled():
+        status("Rauschunterdrueckung...", 5)
+
+        def _denoise(key, path):
+            audio = _load_audio_safe(path)
+            nr_results[key] = _reduce_noise(audio)
+
+        threads = []
+        if has_mic:
+            t = threading.Thread(target=_denoise, args=("mic", mic_path))
+            t.start()
+            threads.append(t)
+        if has_sys:
+            t = threading.Thread(target=_denoise, args=("sys", system_path))
+            t.start()
+            threads.append(t)
+
+        # Load ASR model while noise reduction runs on CPU
+        cache_key = (asr_model_name, device)
+        if _asr_cache["key"] == cache_key and _asr_cache["model"] is not None:
+            asr_model = _asr_cache["model"]
+        else:
+            if _asr_cache["model"] is not None:
+                del _asr_cache["model"]
+                _asr_cache["model"] = None
+                _asr_cache["key"] = None
+                gc.collect()
+                if device == "cuda":
+                    torch.cuda.empty_cache()
+            status("Lade Parakeet ASR-Modell...", 0)
+            asr_model = nemo_asr.models.ASRModel.from_pretrained(asr_model_name)
+            asr_model = asr_model.to(device=device)
+            asr_model.eval()
+            _asr_cache["model"] = asr_model
+            _asr_cache["key"] = cache_key
+
+        # Wait for noise reduction to finish
+        for t in threads:
+            t.join()
+
+        mic_audio = nr_results.get("mic")
+        sys_audio = nr_results.get("sys")
     else:
-        if _asr_cache["model"] is not None:
-            del _asr_cache["model"]
-            _asr_cache["model"] = None
-            _asr_cache["key"] = None
-            gc.collect()
-            if device == "cuda":
-                torch.cuda.empty_cache()
-        status("Lade Parakeet ASR-Modell...", 0)
-        asr_model = nemo_asr.models.ASRModel.from_pretrained(asr_model_name)
-        asr_model = asr_model.to(device=device)
-        asr_model.eval()
-        _asr_cache["model"] = asr_model
-        _asr_cache["key"] = cache_key
+        # No noise reduction — just load model
+        cache_key = (asr_model_name, device)
+        if _asr_cache["key"] == cache_key and _asr_cache["model"] is not None:
+            status("ASR-Modell aus Cache...", 3)
+            asr_model = _asr_cache["model"]
+        else:
+            if _asr_cache["model"] is not None:
+                del _asr_cache["model"]
+                _asr_cache["model"] = None
+                _asr_cache["key"] = None
+                gc.collect()
+                if device == "cuda":
+                    torch.cuda.empty_cache()
+            status("Lade Parakeet ASR-Modell...", 0)
+            asr_model = nemo_asr.models.ASRModel.from_pretrained(asr_model_name)
+            asr_model = asr_model.to(device=device)
+            asr_model.eval()
+            _asr_cache["model"] = asr_model
+            _asr_cache["key"] = cache_key
 
     if cancelled():
         return []
@@ -544,44 +607,40 @@ def transcribe_and_diarize(
     all_segments = []
 
     # --- Mic track (all segments = "Ich") ---
-    if mic_path and os.path.exists(mic_path) and not cancelled():
-        mic_audio = _load_audio_safe(mic_path)
-
-        if noise_reduction:
-            status("Rauschunterdrueckung (Mikrofon)...", 10)
-            mic_audio = _reduce_noise(mic_audio)
+    if has_mic and not cancelled():
+        if mic_audio is None:
+            mic_audio = _load_audio_safe(mic_path)
 
         status("Transkribiere Mikrofon...", 17)
-        # Save to temp file for NeMo's buffered inference (handles long audio)
-        tmp_mic = _save_audio_to_tempfile(mic_audio)
+        nemo_path, needs_cleanup = _prepare_audio_path(mic_audio, mic_path, noise_reduction)
         try:
             with torch.no_grad(), torch.amp.autocast(device_type=device, enabled=(device == "cuda")):
-                hypotheses = asr_model.transcribe([tmp_mic], timestamps=True)
+                hypotheses = asr_model.transcribe([nemo_path], timestamps=True)
             if hypotheses and hypotheses[0].text.strip():
                 all_segments.extend(_extract_segments_from_hypothesis(hypotheses[0], speaker_label="Ich"))
         finally:
-            os.unlink(tmp_mic)
+            if needs_cleanup:
+                os.unlink(nemo_path)
 
         del mic_audio
+        mic_audio = None
 
     # --- System track (needs diarization) ---
-    if system_path and os.path.exists(system_path) and not cancelled():
-        sys_audio = _load_audio_safe(system_path)
-
-        if noise_reduction:
-            status("Rauschunterdrueckung (System-Audio)...", 42)
-            sys_audio = _reduce_noise(sys_audio)
+    if has_sys and not cancelled():
+        if sys_audio is None:
+            sys_audio = _load_audio_safe(system_path)
 
         status("Transkribiere System-Audio...", 49)
-        tmp_sys = _save_audio_to_tempfile(sys_audio)
+        nemo_path, needs_cleanup = _prepare_audio_path(sys_audio, system_path, noise_reduction)
         sys_segments = []
         try:
             with torch.no_grad(), torch.amp.autocast(device_type=device, enabled=(device == "cuda")):
-                hypotheses = asr_model.transcribe([tmp_sys], timestamps=True)
+                hypotheses = asr_model.transcribe([nemo_path], timestamps=True)
             if hypotheses and hypotheses[0].text.strip():
                 sys_segments = _extract_segments_from_hypothesis(hypotheses[0])
         finally:
-            os.unlink(tmp_sys)
+            if needs_cleanup:
+                os.unlink(nemo_path)
 
         if sys_segments:
             # Free ASR model before loading diarization (saves ~1.5GB VRAM)
@@ -595,25 +654,40 @@ def transcribe_and_diarize(
             if not cancelled():
                 status("Sprechererkennung (Diarisierung)...", 74)
                 try:
-                    # pyannote v4.0+ renamed use_auth_token to token
-                    try:
-                        diarize_pipeline = DiarizationPipeline.from_pretrained(
-                            "pyannote/speaker-diarization-3.1",
-                            token=hf_token,
-                        )
-                    except TypeError:
-                        diarize_pipeline = DiarizationPipeline.from_pretrained(
-                            "pyannote/speaker-diarization-3.1",
-                            use_auth_token=hf_token,
-                        )
-                    diarize_pipeline.to(torch.device(device))
+                    # Reuse cached diarization pipeline if available
+                    dia_key = (hf_token, device)
+                    if _diarize_cache["key"] == dia_key and _diarize_cache["pipeline"] is not None:
+                        diarize_pipeline = _diarize_cache["pipeline"]
+                    else:
+                        if _diarize_cache["pipeline"] is not None:
+                            del _diarize_cache["pipeline"]
+                            _diarize_cache["pipeline"] = None
+                            gc.collect()
+                            if device == "cuda":
+                                torch.cuda.empty_cache()
+                        # pyannote v4.0+ renamed use_auth_token to token
+                        try:
+                            diarize_pipeline = DiarizationPipeline.from_pretrained(
+                                "pyannote/speaker-diarization-3.1",
+                                token=hf_token,
+                            )
+                        except TypeError:
+                            diarize_pipeline = DiarizationPipeline.from_pretrained(
+                                "pyannote/speaker-diarization-3.1",
+                                use_auth_token=hf_token,
+                            )
+                        diarize_pipeline.to(torch.device(device))
 
-                    # Reduce batch sizes — pyannote default=32 causes OOM/slowdown on GTX GPUs
-                    pipe = getattr(diarize_pipeline, '_pipeline', diarize_pipeline)
-                    if hasattr(pipe, 'embedding_batch_size'):
-                        pipe.embedding_batch_size = 8
-                    if hasattr(pipe, 'segmentation_batch_size'):
-                        pipe.segmentation_batch_size = 8
+                        # Reduce batch sizes — pyannote default=32 causes OOM/slowdown on GTX GPUs
+                        pipe = getattr(diarize_pipeline, '_pipeline', diarize_pipeline)
+                        if hasattr(pipe, 'embedding_batch_size'):
+                            pipe.embedding_batch_size = 8
+                        if hasattr(pipe, 'segmentation_batch_size'):
+                            pipe.segmentation_batch_size = 8
+
+                        _diarize_cache["pipeline"] = diarize_pipeline
+                        _diarize_cache["key"] = dia_key
+
                     # Re-enable TF32 — pyannote disables it, losing 10-15% GPU speed
                     if device == "cuda":
                         torch.backends.cuda.matmul.allow_tf32 = True
@@ -628,6 +702,9 @@ def transcribe_and_diarize(
 
                     sys_segments = _assign_speakers_to_segments(diarization, sys_segments)
 
+                    # Free diarization pipeline VRAM (will be reloaded from cache next time)
+                    _diarize_cache["pipeline"] = None
+                    _diarize_cache["key"] = None
                     del diarize_pipeline
                     gc.collect()
                     if device == "cuda":
@@ -1255,11 +1332,10 @@ class EBAProtokollApp(tk.Tk):
                 except Exception as exc:
                     logging.warning("Voice profile extraction failed: %s", exc)
 
-            # Compress recordings to FLAC (lossless, ~50% smaller) now that transcription is done
-            self._set_status("Komprimiere Aufnahmen...", 97)
+            # Compress recordings to FLAC in background (lossless, ~50% smaller)
             for wav in (args["mic_path"], args["sys_path"]):
                 if wav and os.path.exists(wav) and wav.endswith(".wav"):
-                    compress_wav_to_flac(wav)
+                    threading.Thread(target=compress_wav_to_flac, args=(wav,), daemon=True).start()
 
             self._finish_transcription(all_segments, out_path)
 
