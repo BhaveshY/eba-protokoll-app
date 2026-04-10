@@ -474,7 +474,6 @@ def _assign_speakers_to_segments(diarization, segments: list[dict]) -> list[dict
 
 
 _asr_cache = {"key": None, "model": None}
-_diarize_cache = {"key": None, "pipeline": None}
 
 
 def _save_audio_to_tempfile(audio, sr: int = 16000) -> str:
@@ -536,14 +535,18 @@ def transcribe_and_diarize(
     has_mic = bool(mic_path) and os.path.exists(mic_path)
     has_sys = bool(system_path) and os.path.exists(system_path)
     mic_audio = sys_audio = None
-    nr_results = {}
+    nr_errors = {}
 
     if noise_reduction and (has_mic or has_sys) and not cancelled():
         status("Rauschunterdrueckung...", 5)
+        nr_results = {}
 
         def _denoise(key, path):
-            audio = _load_audio_safe(path)
-            nr_results[key] = _reduce_noise(audio)
+            try:
+                audio = _load_audio_safe(path)
+                nr_results[key] = _reduce_noise(audio)
+            except Exception as exc:
+                nr_errors[key] = exc
 
         threads = []
         if has_mic:
@@ -578,6 +581,11 @@ def transcribe_and_diarize(
         for t in threads:
             t.join()
 
+        # Re-raise any NR errors so they propagate to the caller
+        if nr_errors:
+            first_err = next(iter(nr_errors.values()))
+            raise first_err
+
         mic_audio = nr_results.get("mic")
         sys_audio = nr_results.get("sys")
     else:
@@ -608,11 +616,19 @@ def transcribe_and_diarize(
 
     # --- Mic track (all segments = "Ich") ---
     if has_mic and not cancelled():
-        if mic_audio is None:
+        # Skip loading audio when we can pass the original WAV directly to NeMo
+        if mic_audio is not None:
+            # Audio was already loaded + denoised
+            nemo_path, needs_cleanup = _prepare_audio_path(mic_audio, mic_path, True)
+        elif mic_path.lower().endswith(".wav"):
+            # No NR, WAV file — pass directly, skip loading
+            nemo_path, needs_cleanup = mic_path, False
+        else:
+            # Non-WAV file without NR — need to load and convert
             mic_audio = _load_audio_safe(mic_path)
+            nemo_path, needs_cleanup = _prepare_audio_path(mic_audio, mic_path, False)
 
         status("Transkribiere Mikrofon...", 17)
-        nemo_path, needs_cleanup = _prepare_audio_path(mic_audio, mic_path, noise_reduction)
         try:
             with torch.no_grad(), torch.amp.autocast(device_type=device, enabled=(device == "cuda")):
                 hypotheses = asr_model.transcribe([nemo_path], timestamps=True)
@@ -622,11 +638,13 @@ def transcribe_and_diarize(
             if needs_cleanup:
                 os.unlink(nemo_path)
 
-        del mic_audio
-        mic_audio = None
+        if mic_audio is not None:
+            del mic_audio
+            mic_audio = None
 
     # --- System track (needs diarization) ---
     if has_sys and not cancelled():
+        # System audio is always needed in memory for diarization later
         if sys_audio is None:
             sys_audio = _load_audio_safe(system_path)
 
@@ -654,40 +672,25 @@ def transcribe_and_diarize(
             if not cancelled():
                 status("Sprechererkennung (Diarisierung)...", 74)
                 try:
-                    # Reuse cached diarization pipeline if available
-                    dia_key = (hf_token, device)
-                    if _diarize_cache["key"] == dia_key and _diarize_cache["pipeline"] is not None:
-                        diarize_pipeline = _diarize_cache["pipeline"]
-                    else:
-                        if _diarize_cache["pipeline"] is not None:
-                            del _diarize_cache["pipeline"]
-                            _diarize_cache["pipeline"] = None
-                            gc.collect()
-                            if device == "cuda":
-                                torch.cuda.empty_cache()
-                        # pyannote v4.0+ renamed use_auth_token to token
-                        try:
-                            diarize_pipeline = DiarizationPipeline.from_pretrained(
-                                "pyannote/speaker-diarization-3.1",
-                                token=hf_token,
-                            )
-                        except TypeError:
-                            diarize_pipeline = DiarizationPipeline.from_pretrained(
-                                "pyannote/speaker-diarization-3.1",
-                                use_auth_token=hf_token,
-                            )
-                        diarize_pipeline.to(torch.device(device))
+                    # pyannote v4.0+ renamed use_auth_token to token
+                    try:
+                        diarize_pipeline = DiarizationPipeline.from_pretrained(
+                            "pyannote/speaker-diarization-3.1",
+                            token=hf_token,
+                        )
+                    except TypeError:
+                        diarize_pipeline = DiarizationPipeline.from_pretrained(
+                            "pyannote/speaker-diarization-3.1",
+                            use_auth_token=hf_token,
+                        )
+                    diarize_pipeline.to(torch.device(device))
 
-                        # Reduce batch sizes — pyannote default=32 causes OOM/slowdown on GTX GPUs
-                        pipe = getattr(diarize_pipeline, '_pipeline', diarize_pipeline)
-                        if hasattr(pipe, 'embedding_batch_size'):
-                            pipe.embedding_batch_size = 8
-                        if hasattr(pipe, 'segmentation_batch_size'):
-                            pipe.segmentation_batch_size = 8
-
-                        _diarize_cache["pipeline"] = diarize_pipeline
-                        _diarize_cache["key"] = dia_key
-
+                    # Reduce batch sizes — pyannote default=32 causes OOM/slowdown on GTX GPUs
+                    pipe = getattr(diarize_pipeline, '_pipeline', diarize_pipeline)
+                    if hasattr(pipe, 'embedding_batch_size'):
+                        pipe.embedding_batch_size = 8
+                    if hasattr(pipe, 'segmentation_batch_size'):
+                        pipe.segmentation_batch_size = 8
                     # Re-enable TF32 — pyannote disables it, losing 10-15% GPU speed
                     if device == "cuda":
                         torch.backends.cuda.matmul.allow_tf32 = True
@@ -702,9 +705,6 @@ def transcribe_and_diarize(
 
                     sys_segments = _assign_speakers_to_segments(diarization, sys_segments)
 
-                    # Free diarization pipeline VRAM (will be reloaded from cache next time)
-                    _diarize_cache["pipeline"] = None
-                    _diarize_cache["key"] = None
                     del diarize_pipeline
                     gc.collect()
                     if device == "cuda":
