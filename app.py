@@ -533,10 +533,7 @@ def transcribe_and_diarize(
                 torch.cuda.empty_cache()
         status("Lade Parakeet ASR-Modell...", 0)
         asr_model = nemo_asr.models.ASRModel.from_pretrained(asr_model_name)
-        if device == "cuda":
-            asr_model = asr_model.to(device="cuda", dtype=torch.float16)
-        else:
-            asr_model = asr_model.to(device="cpu")
+        asr_model = asr_model.to(device=device)
         asr_model.eval()
         _asr_cache["model"] = asr_model
         _asr_cache["key"] = cache_key
@@ -558,7 +555,8 @@ def transcribe_and_diarize(
         # Save to temp file for NeMo's buffered inference (handles long audio)
         tmp_mic = _save_audio_to_tempfile(mic_audio)
         try:
-            hypotheses = asr_model.transcribe([tmp_mic], timestamps=True)
+            with torch.no_grad(), torch.amp.autocast(device_type=device, enabled=(device == "cuda")):
+                hypotheses = asr_model.transcribe([tmp_mic], timestamps=True)
             if hypotheses and hypotheses[0].text.strip():
                 all_segments.extend(_extract_segments_from_hypothesis(hypotheses[0], speaker_label="Ich"))
         finally:
@@ -578,7 +576,8 @@ def transcribe_and_diarize(
         tmp_sys = _save_audio_to_tempfile(sys_audio)
         sys_segments = []
         try:
-            hypotheses = asr_model.transcribe([tmp_sys], timestamps=True)
+            with torch.no_grad(), torch.amp.autocast(device_type=device, enabled=(device == "cuda")):
+                hypotheses = asr_model.transcribe([tmp_sys], timestamps=True)
             if hypotheses and hypotheses[0].text.strip():
                 sys_segments = _extract_segments_from_hypothesis(hypotheses[0])
         finally:
@@ -596,17 +595,25 @@ def transcribe_and_diarize(
             if not cancelled():
                 status("Sprechererkennung (Diarisierung)...", 74)
                 try:
-                    diarize_pipeline = DiarizationPipeline.from_pretrained(
-                        "pyannote/speaker-diarization-3.1",
-                        use_auth_token=hf_token,
-                    )
+                    # pyannote v4.0+ renamed use_auth_token to token
+                    try:
+                        diarize_pipeline = DiarizationPipeline.from_pretrained(
+                            "pyannote/speaker-diarization-3.1",
+                            token=hf_token,
+                        )
+                    except TypeError:
+                        diarize_pipeline = DiarizationPipeline.from_pretrained(
+                            "pyannote/speaker-diarization-3.1",
+                            use_auth_token=hf_token,
+                        )
                     diarize_pipeline.to(torch.device(device))
 
                     # Reduce batch sizes — pyannote default=32 causes OOM/slowdown on GTX GPUs
-                    if hasattr(diarize_pipeline, 'embedding_batch_size'):
-                        diarize_pipeline.embedding_batch_size = 8
-                    if hasattr(diarize_pipeline, 'segmentation_batch_size'):
-                        diarize_pipeline.segmentation_batch_size = 8
+                    pipe = getattr(diarize_pipeline, '_pipeline', diarize_pipeline)
+                    if hasattr(pipe, 'embedding_batch_size'):
+                        pipe.embedding_batch_size = 8
+                    if hasattr(pipe, 'segmentation_batch_size'):
+                        pipe.segmentation_batch_size = 8
                     # Re-enable TF32 — pyannote disables it, losing 10-15% GPU speed
                     if device == "cuda":
                         torch.backends.cuda.matmul.allow_tf32 = True
