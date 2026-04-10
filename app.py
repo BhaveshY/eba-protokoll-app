@@ -50,6 +50,8 @@ logging.root.setLevel(logging.DEBUG)
 # ---------------------------------------------------------------------------
 if not shutil.which("ffmpeg"):
     for _d in [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg"),       # installed by our installer
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg", "bin"),
         r"C:\ffmpeg\bin",
         os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links"),
         r"C:\ProgramData\chocolatey\bin",

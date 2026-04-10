@@ -36,7 +36,7 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-german.WelcomeLabel2=Dieses Programm installiert [name/ver] auf Ihrem Computer.%n%nDie Installation umfasst:%n- Python 3.12 (falls nicht vorhanden)%n- FFmpeg (falls nicht vorhanden)%n- PyTorch mit CUDA-GPU-Beschleunigung%n- Parakeet TDT Spracherkennung (ONNX Runtime)%n- Sprechererkennung (pyannote)%n%nBenoetigter Speicherplatz: ca. 4 GB%nInternetverbindung erforderlich.
+german.WelcomeLabel2=Dieses Programm installiert [name/ver] auf Ihrem Computer.%n%nDie Installation umfasst:%n- Python 3.12 (falls nicht vorhanden)%n- FFmpeg (falls nicht vorhanden)%n- PyTorch mit CUDA-GPU-Beschleunigung%n- Parakeet TDT Spracherkennung (ONNX Runtime)%n- Sprechererkennung (pyannote)%n%nBenoetigter Speicherplatz: ca. 5 GB%nInternetverbindung erforderlich.
 
 [Files]
 ; App files
@@ -61,7 +61,7 @@ Name: "{group}\{#AppName} deinstallieren"; Filename: "{uninstallexe}"
 [Run]
 ; Run the dependency installer after file copy — visible PowerShell window so user sees progress
 Filename: "powershell.exe"; \
-    Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""& '{tmp}\install_deps.ps1' -InstallDir '{app}'{code:GetTokenParam}; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}"""; \
+    Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""& '{tmp}\install_deps.ps1' -InstallDir '{app}'{code:GetTokenParam}; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }"""; \
     StatusMsg: "Installiere Abhaengigkeiten (Python, FFmpeg, PyTorch, Parakeet ASR, ...) - dies dauert ca. 10-20 Minuten..."; \
     Flags: waituntilterminated runascurrentuser; \
     Description: "Abhaengigkeiten installieren"
