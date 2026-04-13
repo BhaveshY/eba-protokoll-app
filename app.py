@@ -61,6 +61,24 @@ if not shutil.which("ffmpeg"):
             break
 
 # ---------------------------------------------------------------------------
+# Expose PyTorch's bundled CUDA/cuDNN DLLs to ONNX Runtime
+# ---------------------------------------------------------------------------
+# onnxruntime-gpu requires cuDNN 9 + cuBLAS (cublasLt64_12.dll, cudnn_*.dll).
+# PyTorch's CUDA wheels already ship these DLLs in torch/lib/ — we just need
+# to add that directory to the Windows DLL search path before onnxruntime
+# loads its CUDA provider. Without this, ASR falls back to CPU (much slower).
+try:
+    import torch as _torch_probe
+    _torch_lib = os.path.join(os.path.dirname(_torch_probe.__file__), "lib")
+    if os.path.isdir(_torch_lib):
+        if hasattr(os, "add_dll_directory"):
+            os.add_dll_directory(_torch_lib)
+        os.environ["PATH"] = _torch_lib + ";" + os.environ.get("PATH", "")
+    del _torch_probe, _torch_lib
+except Exception as _exc:
+    logging.debug("Could not expose torch CUDA DLLs: %s", _exc)
+
+# ---------------------------------------------------------------------------
 # Configuration helpers
 # ---------------------------------------------------------------------------
 
@@ -513,7 +531,10 @@ def transcribe_and_diarize(
     else:
         status("Lade Parakeet ASR-Modell...", 0)
         # GPU auto-detected: uses CUDAExecutionProvider if onnxruntime-gpu installed
-        asr_model = onnx_asr.load_model(asr_model_name).with_vad()
+        asr_base = onnx_asr.load_model(asr_model_name)
+        # onnx-asr >= 0.11 requires an explicit VAD instance; default is silero
+        vad = onnx_asr.load_vad()
+        asr_model = asr_base.with_vad(vad)
         _asr_cache["model"] = asr_model
         _asr_cache["key"] = cache_key
 

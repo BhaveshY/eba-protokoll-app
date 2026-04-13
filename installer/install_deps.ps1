@@ -211,7 +211,7 @@ if (-not (Test-Path $configPath)) {
 # --------------------------------------------------------------------------
 Write-Step 8 $TOTAL "Lade Parakeet ASR-Modell herunter (~640 MB)..."
 
-& $venvPython -c "import onnx_asr; print('  Lade Parakeet TDT 0.6b v3...'); m = onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3'); print('  ASR-Modell geladen - OK'); print('  Lade VAD-Modell...'); m.with_vad(); print('  VAD-Modell geladen - OK')" 2>&1
+& $venvPython -c "import onnx_asr; print('  Lade Parakeet TDT 0.6b v3...'); m = onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3'); print('  ASR-Modell geladen - OK'); print('  Lade VAD-Modell (silero)...'); vad = onnx_asr.load_vad(); m.with_vad(vad); print('  VAD-Modell geladen - OK')" 2>&1
 
 # --------------------------------------------------------------------------
 # 9. Verify installation
