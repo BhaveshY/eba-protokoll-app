@@ -374,21 +374,11 @@ def get_gpu_info() -> dict:
     return info
 
 
-def _peak_normalize(samples, target_peak: float = 0.95):
-    """Peak-normalize to target amplitude. Quiet recordings otherwise starve ASR of
-    dynamic range, producing missed short words and lower confidence scores."""
-    import numpy as np
-    samples = samples.astype(np.float32, copy=False)
-    peak = float(np.max(np.abs(samples))) if samples.size else 0.0
-    if peak > 1e-4 and peak < target_peak:
-        samples = samples * (target_peak / peak)
-    return samples
-
-
 def _load_audio_safe(filepath: str):
-    """Load audio as 16 kHz mono float32 numpy array with peak normalization.
+    """Load audio as 16 kHz mono float32 numpy array.
     Uses torchaudio first (handles most formats via FFmpeg), falls back to stdlib wave
-    + scipy polyphase resampling for WAV files when torchaudio is unavailable."""
+    + scipy polyphase resampling for WAV files when torchaudio is unavailable.
+    No normalization — amplifies noise floor on quiet recordings."""
     import numpy as np
 
     samples = None
@@ -444,25 +434,20 @@ def _load_audio_safe(filepath: str):
                 "(benoetigt fuer MP3/M4A/FLAC)."
             )
 
-    # Peak-normalize so quiet recordings get proper dynamic range for the ASR
-    return _peak_normalize(samples)
+    return samples
 
 
 def _reduce_noise(audio, sr: int = 16000):
     """Apply spectral gating noise reduction optimized for speech.
-    Tuned to avoid musical-noise artifacts that Parakeet sometimes transcribes as
-    spurious syllables. Less aggressive reduction + mask smoothing preserves
-    phoneme detail for soft speakers."""
+    Uses noisereduce with parameters tuned per library source docs (n_fft=512 for speech)."""
     import noisereduce as nr
     return nr.reduce_noise(
         y=audio,
         sr=sr,
         stationary=False,
-        prop_decrease=0.7,           # was 0.85 — less aggressive
-        n_fft=512,                   # 32 ms window at 16 kHz
-        freq_mask_smooth_hz=500,     # smooth masks in frequency — avoids musical noise
-        time_mask_smooth_ms=50,      # temporal smoothing — avoids choppy transitions
-        n_jobs=1,                    # 1 job to avoid joblib worker segfault on Windows
+        prop_decrease=0.85,
+        n_fft=512,
+        n_jobs=1,  # 1 job to avoid joblib worker segfault on Windows
     )
 
 
@@ -568,15 +553,9 @@ def transcribe_and_diarize(
         asr_base = onnx_asr.load_model(asr_model_name)
         # onnx-asr >= 0.11 requires an explicit VAD instance; default is silero
         vad = onnx_asr.load_vad()
-        # VAD tuned for meeting audio: more sensitive threshold catches soft speech,
-        # longer speech_pad preserves word boundaries, min_silence avoids splitting mid-phrase.
-        asr_model = asr_base.with_vad(
-            vad,
-            threshold=0.35,               # default 0.5 is tuned for loud podcast audio
-            speech_pad_ms=200,            # default 30 ms clips word edges
-            min_silence_duration_ms=300,  # don't split on short pauses (breaths)
-            min_speech_duration_ms=100,   # keep short utterances like "Ja"
-        )
+        # Use silero's default settings — aggressive tuning (low threshold / long pad)
+        # causes more mismatched words than it fixes on typical meeting audio.
+        asr_model = asr_base.with_vad(vad)
         _asr_cache["model"] = asr_model
         _asr_cache["key"] = cache_key
 
