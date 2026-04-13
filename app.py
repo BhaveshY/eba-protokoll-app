@@ -527,8 +527,10 @@ def transcribe_and_diarize(
               like "de"/"en" to bias decoding toward that language."""
     import onnx_asr
 
-    # Build kwargs for asr_model.recognize() — pnc always on; language only when forced
-    recognize_kwargs = {"pnc": True}
+    # Build kwargs for asr_model.recognize() — pnc always on; language only when forced.
+    # channel="mean" mixes stereo (system loopback audio) down to mono — Parakeet/Canary
+    # only accept mono input. No-op for already-mono audio.
+    recognize_kwargs = {"pnc": True, "channel": "mean"}
     if language and language != "auto":
         recognize_kwargs["language"] = language
 
