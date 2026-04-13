@@ -553,9 +553,9 @@ def transcribe_and_diarize(
         asr_base = onnx_asr.load_model(asr_model_name)
         # onnx-asr >= 0.11 requires an explicit VAD instance; default is silero
         vad = onnx_asr.load_vad()
-        # Use silero's default settings — aggressive tuning (low threshold / long pad)
-        # causes more mismatched words than it fixes on typical meeting audio.
-        asr_model = asr_base.with_vad(vad)
+        # Mild padding (100 ms vs default 30 ms) prevents clipping short syllables
+        # at segment edges without introducing the phantom-word issue of 200 ms pads.
+        asr_model = asr_base.with_vad(vad, speech_pad_ms=100)
         _asr_cache["model"] = asr_model
         _asr_cache["key"] = cache_key
 
@@ -946,15 +946,45 @@ class EBAProtokollApp(tk.Tk):
             fill="x"
         )
 
-        # ASR model info
+        # ASR model selection
         model_frame = ttk.LabelFrame(tab, text="ASR-Modell", padding=6)
         model_frame.pack(fill="x", pady=(0, 8))
 
         ttk.Label(
             model_frame,
-            text="NVIDIA Parakeet TDT 0.6b v3 via ONNX Runtime (25 Sprachen)",
+            text="Canary = hoechste Genauigkeit (1 Mrd. Parameter, ca. 2x langsamer).\n"
+                 "Parakeet = gute Balance aus Geschwindigkeit und Qualitaet.",
             font=("Segoe UI", 9),
-        ).pack(anchor="w")
+            foreground="gray",
+        ).pack(anchor="w", pady=(0, 4))
+
+        _MODEL_OPTIONS = [
+            ("Canary 1b v2 (maximale Genauigkeit, 25 Sprachen)", "nemo-canary-1b-v2"),
+            ("Parakeet TDT 0.6b v3 (schnell, 25 Sprachen)", "nemo-parakeet-tdt-0.6b-v3"),
+        ]
+        self._model_label_to_code = {lbl: code for lbl, code in _MODEL_OPTIONS}
+        self._model_code_to_label = {code: lbl for lbl, code in _MODEL_OPTIONS}
+
+        current_model_code = self.config_data.get("asr_model", "nemo-parakeet-tdt-0.6b-v3")
+        current_model_label = self._model_code_to_label.get(current_model_code, _MODEL_OPTIONS[1][0])
+
+        self._model_var = tk.StringVar(value=current_model_code)
+        self._model_display_var = tk.StringVar(value=current_model_label)
+
+        model_combo = ttk.Combobox(
+            model_frame,
+            textvariable=self._model_display_var,
+            values=[lbl for lbl, _ in _MODEL_OPTIONS],
+            state="readonly",
+            width=50,
+        )
+        model_combo.pack(anchor="w")
+
+        def _on_model_change(_event=None):
+            label = self._model_display_var.get()
+            self._model_var.set(self._model_label_to_code.get(label, "nemo-parakeet-tdt-0.6b-v3"))
+
+        model_combo.bind("<<ComboboxSelected>>", _on_model_change)
 
         # Language hint (auto by default — required for code-switched meetings)
         lang_frame = ttk.LabelFrame(tab, text="Sprache", padding=6)
@@ -1027,9 +1057,16 @@ class EBAProtokollApp(tk.Tk):
         self._nr_var = tk.BooleanVar(value=self.config_data.get("noise_reduction", True))
         ttk.Checkbutton(
             nr_frame,
-            text="Rauschunterdrueckung vor Transkription (empfohlen)",
+            text="Rauschunterdrueckung vor Transkription",
             variable=self._nr_var,
         ).pack(anchor="w")
+        ttk.Label(
+            nr_frame,
+            text="Bei sauberer Audio (Headset, leises Buero) ausschalten fuer bessere\n"
+                 "Worterkennung. Einschalten nur bei starkem Hintergrundrauschen.",
+            font=("Segoe UI", 9),
+            foreground="gray",
+        ).pack(anchor="w", pady=(2, 0))
 
         # GPU info
         gpu_frame = ttk.LabelFrame(tab, text="GPU Status", padding=6)
@@ -1059,6 +1096,8 @@ class EBAProtokollApp(tk.Tk):
         self.config_data["noise_reduction"] = self._nr_var.get()
         if hasattr(self, "_lang_var"):
             self.config_data["language"] = self._lang_var.get()
+        if hasattr(self, "_model_var"):
+            self.config_data["asr_model"] = self._model_var.get()
 
     def _save_settings(self) -> None:
         self._sync_config_from_ui()
@@ -1228,7 +1267,8 @@ class EBAProtokollApp(tk.Tk):
         language = self._lang_var.get() if hasattr(self, "_lang_var") else self.config_data.get("language", "auto")
         worker_args = {
             "hf_token": hf_token,
-            "model": self.config_data.get("asr_model", "nemo-parakeet-tdt-0.6b-v3"),
+            "model": (self._model_var.get() if hasattr(self, "_model_var")
+                      else self.config_data.get("asr_model", "nemo-parakeet-tdt-0.6b-v3")),
             "base_dir": self._dir_var.get().strip() or DEFAULT_CONFIG["output_dir"],
             "project": self._project_var.get().strip() or "Besprechung",
             "mic_path": self._last_mic_path,
