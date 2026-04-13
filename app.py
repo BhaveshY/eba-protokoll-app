@@ -88,6 +88,7 @@ CONFIG_PATH = APP_DIR / "config.json"
 DEFAULT_CONFIG = {
     "hf_token": "",
     "asr_model": "nemo-parakeet-tdt-0.6b-v3",
+    "language": "auto",  # "auto" = let Parakeet detect; set "de"/"en"/etc for a single-language bias
     "speaker_names": {},
     "output_dir": r"C:\EBA-Protokoll",
     "noise_reduction": True,
@@ -373,11 +374,26 @@ def get_gpu_info() -> dict:
     return info
 
 
+def _peak_normalize(samples, target_peak: float = 0.95):
+    """Peak-normalize to target amplitude. Quiet recordings otherwise starve ASR of
+    dynamic range, producing missed short words and lower confidence scores."""
+    import numpy as np
+    samples = samples.astype(np.float32, copy=False)
+    peak = float(np.max(np.abs(samples))) if samples.size else 0.0
+    if peak > 1e-4 and peak < target_peak:
+        samples = samples * (target_peak / peak)
+    return samples
+
+
 def _load_audio_safe(filepath: str):
-    """Load audio as numpy array, with multiple fallbacks for Windows compatibility."""
+    """Load audio as 16 kHz mono float32 numpy array with peak normalization.
+    Uses torchaudio first (handles most formats via FFmpeg), falls back to stdlib wave
+    + scipy polyphase resampling for WAV files when torchaudio is unavailable."""
     import numpy as np
 
-    # 1) torchaudio
+    samples = None
+
+    # 1) torchaudio (preferred — high-quality Kaiser resampling, handles MP3/M4A/etc.)
     try:
         import torchaudio
         waveform, sample_rate = torchaudio.load(filepath)
@@ -385,59 +401,68 @@ def _load_audio_safe(filepath: str):
             waveform = torchaudio.functional.resample(waveform, sample_rate, 16000)
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
-        return waveform.squeeze().numpy()
+        samples = waveform.squeeze().numpy().astype(np.float32)
     except Exception:
         pass
 
-    # 2) stdlib wave module (WAV files only, always available)
-    try:
-        with wave.open(filepath, "rb") as wf:
-            n_channels = wf.getnchannels()
-            sampwidth = wf.getsampwidth()
-            sample_rate = wf.getframerate()
-            raw = wf.readframes(wf.getnframes())
+    # 2) stdlib wave module fallback (WAV only)
+    if samples is None:
+        try:
+            with wave.open(filepath, "rb") as wf:
+                n_channels = wf.getnchannels()
+                sampwidth = wf.getsampwidth()
+                sample_rate = wf.getframerate()
+                raw = wf.readframes(wf.getnframes())
 
-        if sampwidth == 2:
-            samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-        elif sampwidth == 4:
-            samples = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
-        else:
-            samples = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
-
-        if n_channels > 1:
-            samples = samples.reshape(-1, n_channels).mean(axis=1)
-
-        if sample_rate != 16000:
-            import scipy.signal
-            from math import gcd
-            g = gcd(16000, sample_rate)
-            up, down = 16000 // g, sample_rate // g
-            if up * down < 1000:
-                samples = scipy.signal.resample_poly(samples, up, down).astype(np.float32)
+            if sampwidth == 2:
+                samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            elif sampwidth == 4:
+                samples = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
             else:
-                num_samples = int(len(samples) * 16000 / sample_rate)
-                samples = scipy.signal.resample(samples, num_samples)
+                samples = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
 
-        return samples.astype(np.float32)
-    except Exception:
-        raise RuntimeError(
-            f"Audiodatei konnte nicht geladen werden: {filepath}\n"
-            "Bitte stellen Sie sicher, dass FFmpeg installiert ist "
-            "(benoetigt fuer MP3/M4A/FLAC)."
-        )
+            if n_channels > 1:
+                samples = samples.reshape(-1, n_channels).mean(axis=1)
+
+            if sample_rate != 16000:
+                import scipy.signal
+                from math import gcd
+                g = gcd(16000, sample_rate)
+                up, down = 16000 // g, sample_rate // g
+                # Always use polyphase filtering — handles any ratio including 44100->16000
+                # (up=160, down=441) with proper antialiasing. Kaiser beta=5.0 is SciPy's
+                # recommended default for speech.
+                samples = scipy.signal.resample_poly(
+                    samples, up, down, window=("kaiser", 5.0),
+                ).astype(np.float32)
+
+            samples = samples.astype(np.float32)
+        except Exception:
+            raise RuntimeError(
+                f"Audiodatei konnte nicht geladen werden: {filepath}\n"
+                "Bitte stellen Sie sicher, dass FFmpeg installiert ist "
+                "(benoetigt fuer MP3/M4A/FLAC)."
+            )
+
+    # Peak-normalize so quiet recordings get proper dynamic range for the ASR
+    return _peak_normalize(samples)
 
 
 def _reduce_noise(audio, sr: int = 16000):
     """Apply spectral gating noise reduction optimized for speech.
-    Uses noisereduce with parameters tuned per library source docs (n_fft=512 for speech)."""
+    Tuned to avoid musical-noise artifacts that Parakeet sometimes transcribes as
+    spurious syllables. Less aggressive reduction + mask smoothing preserves
+    phoneme detail for soft speakers."""
     import noisereduce as nr
     return nr.reduce_noise(
         y=audio,
         sr=sr,
         stationary=False,
-        prop_decrease=0.85,
-        n_fft=512,
-        n_jobs=-1,  # use all CPU cores
+        prop_decrease=0.7,           # was 0.85 — less aggressive
+        n_fft=512,                   # 32 ms window at 16 kHz
+        freq_mask_smooth_hz=500,     # smooth masks in frequency — avoids musical noise
+        time_mask_smooth_ms=50,      # temporal smoothing — avoids choppy transitions
+        n_jobs=1,                    # 1 job to avoid joblib worker segfault on Windows
     )
 
 
@@ -507,11 +532,20 @@ def transcribe_and_diarize(
     progress_callback=None,
     cancel_event: threading.Event = None,
     noise_reduction: bool = True,
+    language: str = "auto",
 ) -> list[dict]:
     """Transcribe mic + system tracks using Parakeet TDT (onnx-asr) + pyannote diarization.
     Returns merged, sorted segments. Checks cancel_event between stages.
-    On diarization failure, returns transcript without speaker labels."""
+    On diarization failure, returns transcript without speaker labels.
+
+    language: "auto" for automatic detection (handles code-switching), or an ISO code
+              like "de"/"en" to bias decoding toward that language."""
     import onnx_asr
+
+    # Build kwargs for asr_model.recognize() — pnc always on; language only when forced
+    recognize_kwargs = {"pnc": True}
+    if language and language != "auto":
+        recognize_kwargs["language"] = language
 
     def status(msg, pct=-1):
         if progress_callback:
@@ -534,7 +568,15 @@ def transcribe_and_diarize(
         asr_base = onnx_asr.load_model(asr_model_name)
         # onnx-asr >= 0.11 requires an explicit VAD instance; default is silero
         vad = onnx_asr.load_vad()
-        asr_model = asr_base.with_vad(vad)
+        # VAD tuned for meeting audio: more sensitive threshold catches soft speech,
+        # longer speech_pad preserves word boundaries, min_silence avoids splitting mid-phrase.
+        asr_model = asr_base.with_vad(
+            vad,
+            threshold=0.35,               # default 0.5 is tuned for loud podcast audio
+            speech_pad_ms=200,            # default 30 ms clips word edges
+            min_silence_duration_ms=300,  # don't split on short pauses (breaths)
+            min_speech_duration_ms=100,   # keep short utterances like "Ja"
+        )
         _asr_cache["model"] = asr_model
         _asr_cache["key"] = cache_key
 
@@ -582,12 +624,12 @@ def transcribe_and_diarize(
             # Denoised audio — save to temp file for onnx-asr
             tmp = _save_audio_to_tempfile(mic_audio)
             try:
-                results = list(asr_model.recognize(tmp))
+                results = list(asr_model.recognize(tmp, **recognize_kwargs))
             finally:
                 os.unlink(tmp)
         else:
             # Original file — pass directly
-            results = list(asr_model.recognize(mic_path))
+            results = list(asr_model.recognize(mic_path, **recognize_kwargs))
 
         all_segments.extend(_segment_results_to_dicts(results, speaker_label="Ich"))
 
@@ -605,11 +647,11 @@ def transcribe_and_diarize(
         if noise_reduction and sys_audio is not None:
             tmp = _save_audio_to_tempfile(sys_audio)
             try:
-                results = list(asr_model.recognize(tmp))
+                results = list(asr_model.recognize(tmp, **recognize_kwargs))
             finally:
                 os.unlink(tmp)
         else:
-            results = list(asr_model.recognize(system_path))
+            results = list(asr_model.recognize(system_path, **recognize_kwargs))
 
         sys_segments = _segment_results_to_dicts(results)
 
@@ -935,15 +977,54 @@ class EBAProtokollApp(tk.Tk):
             font=("Segoe UI", 9),
         ).pack(anchor="w")
 
-        # Language (auto-detected by Parakeet TDT v3)
+        # Language hint (auto by default — required for code-switched meetings)
         lang_frame = ttk.LabelFrame(tab, text="Sprache", padding=6)
         lang_frame.pack(fill="x", pady=(0, 8))
 
         ttk.Label(
             lang_frame,
-            text="Automatische Erkennung (25 europaeische Sprachen)",
+            text="Automatisch = mehrsprachige Meetings (z.B. Deutsch + Englisch).\n"
+                 "Eine Sprache waehlen nur, wenn wirklich nur eine Sprache gesprochen wird.",
             font=("Segoe UI", 9),
-        ).pack(anchor="w")
+            foreground="gray",
+        ).pack(anchor="w", pady=(0, 4))
+
+        # Display label -> config value
+        _LANG_OPTIONS = [
+            ("Automatisch (mehrsprachig, empfohlen)", "auto"),
+            ("Deutsch", "de"),
+            ("Englisch", "en"),
+            ("Spanisch", "es"),
+            ("Franzoesisch", "fr"),
+            ("Italienisch", "it"),
+            ("Portugiesisch", "pt"),
+            ("Niederlaendisch", "nl"),
+            ("Polnisch", "pl"),
+        ]
+        self._lang_label_to_code = {lbl: code for lbl, code in _LANG_OPTIONS}
+        self._lang_code_to_label = {code: lbl for lbl, code in _LANG_OPTIONS}
+
+        current_code = self.config_data.get("language", "auto")
+        current_label = self._lang_code_to_label.get(current_code, _LANG_OPTIONS[0][0])
+
+        # Internal var holds the ISO code; combobox works with display labels
+        self._lang_var = tk.StringVar(value=current_code)
+        self._lang_display_var = tk.StringVar(value=current_label)
+
+        lang_combo = ttk.Combobox(
+            lang_frame,
+            textvariable=self._lang_display_var,
+            values=[lbl for lbl, _ in _LANG_OPTIONS],
+            state="readonly",
+            width=40,
+        )
+        lang_combo.pack(anchor="w")
+
+        def _on_lang_change(_event=None):
+            label = self._lang_display_var.get()
+            self._lang_var.set(self._lang_label_to_code.get(label, "auto"))
+
+        lang_combo.bind("<<ComboboxSelected>>", _on_lang_change)
 
         # Output directory
         dir_frame = ttk.LabelFrame(tab, text="Ausgabe-Verzeichnis", padding=6)
@@ -997,6 +1078,8 @@ class EBAProtokollApp(tk.Tk):
         self.config_data["hf_token"] = self._token_var.get().strip()
         self.config_data["output_dir"] = self._dir_var.get().strip()
         self.config_data["noise_reduction"] = self._nr_var.get()
+        if hasattr(self, "_lang_var"):
+            self.config_data["language"] = self._lang_var.get()
 
     def _save_settings(self) -> None:
         self._sync_config_from_ui()
@@ -1162,6 +1245,8 @@ class EBAProtokollApp(tk.Tk):
             return
 
         # Read all tkinter vars on main thread before launching worker (thread safety)
+        # Read language on main thread (tkinter vars are not thread-safe)
+        language = self._lang_var.get() if hasattr(self, "_lang_var") else self.config_data.get("language", "auto")
         worker_args = {
             "hf_token": hf_token,
             "model": self.config_data.get("asr_model", "nemo-parakeet-tdt-0.6b-v3"),
@@ -1170,6 +1255,7 @@ class EBAProtokollApp(tk.Tk):
             "mic_path": self._last_mic_path,
             "sys_path": self._last_sys_path,
             "noise_reduction": self._nr_var.get(),
+            "language": language,
         }
 
         self._cancel_event = threading.Event()
@@ -1208,6 +1294,7 @@ class EBAProtokollApp(tk.Tk):
                 progress_callback=self._set_status,
                 cancel_event=self._cancel_event,
                 noise_reduction=args["noise_reduction"],
+                language=args.get("language", "auto"),
             )
 
             was_cancelled = self._cancel_event and self._cancel_event.is_set()
