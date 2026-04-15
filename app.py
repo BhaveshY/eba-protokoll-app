@@ -92,6 +92,7 @@ DEFAULT_CONFIG = {
     "speaker_names": {},
     "output_dir": r"C:\EBA-Protokoll",
     "noise_reduction": True,
+    "debug_memory": False,
 }
 
 
@@ -374,6 +375,28 @@ def get_gpu_info() -> dict:
     return info
 
 
+def _log_memory(tag: str) -> None:
+    """Log RSS + CUDA memory at a checkpoint. Opt-in via config['debug_memory'].
+    Caller is responsible for gating on the flag; this helper unconditionally logs.
+    psutil is a soft dependency — if missing, RSS is omitted."""
+    rss_mb = -1.0
+    try:
+        import psutil
+        rss_mb = psutil.Process().memory_info().rss / 1024 / 1024
+    except ImportError:
+        pass
+    try:
+        import torch
+        if torch.cuda.is_available():
+            cuda_mb = torch.cuda.memory_allocated() / 1024 / 1024
+            cuda_peak = torch.cuda.max_memory_allocated() / 1024 / 1024
+            logging.info("[mem:%s] RSS=%.0fMB CUDA=%.0fMB peak=%.0fMB", tag, rss_mb, cuda_mb, cuda_peak)
+            return
+    except ImportError:
+        pass
+    logging.info("[mem:%s] RSS=%.0fMB", tag, rss_mb)
+
+
 def _load_audio_safe(filepath: str):
     """Load audio as 16 kHz mono float32 numpy array.
     Uses torchaudio first (handles most formats via FFmpeg), falls back to stdlib wave
@@ -518,14 +541,30 @@ def transcribe_and_diarize(
     cancel_event: threading.Event = None,
     noise_reduction: bool = True,
     language: str = "auto",
+    debug_memory: bool = False,
 ) -> list[dict]:
     """Transcribe mic + system tracks using Parakeet TDT (onnx-asr) + pyannote diarization.
     Returns merged, sorted segments. Checks cancel_event between stages.
     On diarization failure, returns transcript without speaker labels.
 
     language: "auto" for automatic detection (handles code-switching), or an ISO code
-              like "de"/"en" to bias decoding toward that language."""
+              like "de"/"en" to bias decoding toward that language.
+    debug_memory: when True, logs RSS + CUDA memory at pipeline checkpoints."""
     import onnx_asr
+
+    # Lift torch to function scope — used later for pre-diarization VRAM release
+    # and (when debug_memory=True) for peak-stat reset. Import is cheap once loaded.
+    try:
+        import torch as _torch
+    except ImportError:
+        _torch = None
+
+    if debug_memory and _torch is not None and _torch.cuda.is_available():
+        _torch.cuda.reset_peak_memory_stats()
+
+    def mem(tag: str) -> None:
+        if debug_memory:
+            _log_memory(tag)
 
     # Build kwargs for asr_model.recognize() — pnc always on; language only when forced.
     # channel="mean" mixes stereo (system loopback audio) down to mono — Parakeet/Canary
@@ -618,6 +657,8 @@ def transcribe_and_diarize(
             del mic_audio
             mic_audio = None
 
+        mem("after_mic_asr")
+
     # --- System track (needs diarization) ---
     if has_sys and not cancelled():
         # Always load sys_audio into memory — needed for diarization later
@@ -637,6 +678,16 @@ def transcribe_and_diarize(
         sys_segments = _segment_results_to_dicts(results)
 
         if sys_segments and not cancelled():
+            # Release intermediate ORT tensors and any dead numpy arrays before
+            # pyannote loads its segmentation + embedding models onto the GPU.
+            # Meaningful on low-VRAM GPUs where ASR cache + diarization stack tight.
+            # Safe: ONNX Runtime uses its own CUDA allocator, so this does not
+            # invalidate the cached ASR model in _asr_cache.
+            gc.collect()
+            if _torch is not None and _torch.cuda.is_available():
+                _torch.cuda.empty_cache()
+            mem("before_diarize")
+
             status("Sprechererkennung (Diarisierung)...", 74)
             try:
                 import torch
@@ -667,13 +718,17 @@ def transcribe_and_diarize(
                 if device == "cuda":
                     torch.backends.cuda.matmul.allow_tf32 = True
 
-                try:
-                    diarization = diarize_pipeline(
-                        {"waveform": torch.from_numpy(sys_audio).unsqueeze(0).float(), "sample_rate": 16000},
-                        min_speakers=1, max_speakers=10,
-                    )
-                except (OSError, RuntimeError, ImportError, AttributeError):
-                    diarization = diarize_pipeline(system_path, min_speakers=1, max_speakers=10)
+                # inference_mode is a strict superset of no_grad (also disables view
+                # tracking) — small but free speedup on repeated tensor ops. pyannote
+                # uses no_grad internally; wrapping externally is compatible.
+                with torch.inference_mode():
+                    try:
+                        diarization = diarize_pipeline(
+                            {"waveform": torch.from_numpy(sys_audio).unsqueeze(0).float(), "sample_rate": 16000},
+                            min_speakers=1, max_speakers=10,
+                        )
+                    except (OSError, RuntimeError, ImportError, AttributeError):
+                        diarization = diarize_pipeline(system_path, min_speakers=1, max_speakers=10)
 
                 sys_segments = _assign_speakers_to_segments(diarization, sys_segments)
 
@@ -681,6 +736,7 @@ def transcribe_and_diarize(
                 gc.collect()
                 if device == "cuda":
                     torch.cuda.empty_cache()
+                mem("after_diarize")
             except Exception as exc:
                 status(f"Sprechererkennung fehlgeschlagen ({exc}) -- Transkript ohne Sprecherzuordnung.")
 
@@ -1277,6 +1333,7 @@ class EBAProtokollApp(tk.Tk):
             "sys_path": self._last_sys_path,
             "noise_reduction": self._nr_var.get(),
             "language": language,
+            "debug_memory": bool(self.config_data.get("debug_memory", False)),
         }
 
         self._cancel_event = threading.Event()
@@ -1316,6 +1373,7 @@ class EBAProtokollApp(tk.Tk):
                 cancel_event=self._cancel_event,
                 noise_reduction=args["noise_reduction"],
                 language=args.get("language", "auto"),
+                debug_memory=args.get("debug_memory", False),
             )
 
             was_cancelled = self._cancel_event and self._cancel_event.is_set()

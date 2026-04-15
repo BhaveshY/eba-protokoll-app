@@ -171,7 +171,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Step 6 $TOTAL "Installiere ASR und Abhaengigkeiten..."
 Write-Host "  Dies kann einige Minuten dauern..."
 
-& $pipExe install "onnx-asr[gpu,hub]" "onnxruntime-gpu>=1.19" pyannote.audio sounddevice numpy scipy PyAudioWPatch noisereduce 2>&1 | ForEach-Object {
+& $pipExe install "onnx-asr[gpu,hub]" "onnxruntime-gpu>=1.19" "pyannote.audio>=3.1,<4.0" sounddevice numpy scipy PyAudioWPatch noisereduce 2>&1 | ForEach-Object {
     if ($_ -match "^(Downloading|Installing|Successfully)") { Write-Host "  $_" }
 }
 if ($LASTEXITCODE -ne 0) {

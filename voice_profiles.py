@@ -113,7 +113,8 @@ def extract_speaker_embeddings(
                 continue
             try:
                 audio_dict = {"waveform": clip.float(), "sample_rate": sr}
-                emb = inference(audio_dict)
+                with torch.inference_mode():
+                    emb = inference(audio_dict)
                 embs.append(np.array(emb).flatten().astype(np.float32))
             except Exception as exc:
                 logging.debug("Embedding extraction failed for segment: %s", exc)

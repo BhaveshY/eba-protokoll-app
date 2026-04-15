@@ -239,7 +239,7 @@ echo   onnx-asr + pyannote.audio und weitere Pakete.
 echo   Dies kann einige Minuten dauern...
 echo.
 
-pip install "onnx-asr[gpu,hub]" "onnxruntime-gpu>=1.19" pyannote.audio sounddevice numpy scipy PyAudioWPatch noisereduce
+pip install "onnx-asr[gpu,hub]" "onnxruntime-gpu>=1.19" "pyannote.audio>=3.1,<4.0" sounddevice numpy scipy PyAudioWPatch noisereduce
 if %ERRORLEVEL% neq 0 (
     echo.
     echo  FEHLER: Installation der Abhaengigkeiten fehlgeschlagen!
