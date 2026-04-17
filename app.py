@@ -1,16 +1,6 @@
-"""
-EBA Protokoll App
-==================
-Windows 11 tkinter application for recording virtual meetings with
-speaker diarization. Records mic + system audio (WASAPI loopback)
-as separate tracks, then transcribes using NVIDIA Parakeet TDT v3
-(via onnx-asr / ONNX Runtime) and diarizes using pyannote.audio.
-
-Requires:
-    pip install onnx-asr[gpu,hub] onnxruntime-gpu pyannote.audio torch torchaudio sounddevice PyAudioWPatch numpy
-
-Target hardware: CPU + NVIDIA GPU (Windows 11)
-"""
+"""EBA Protokoll — meeting transcription with speaker diarization (Windows 11, NVIDIA GPU).
+Records mic + system audio (WASAPI loopback), transcribes via Parakeet TDT / onnx-asr,
+diarizes via pyannote.audio."""
 
 import gc
 import json
@@ -29,14 +19,11 @@ from tkinter import ttk, filedialog, messagebox
 from datetime import datetime
 from pathlib import Path
 
-# pythonw.exe sets sys.stdout/stderr to None — PyTorch crashes when downloading models
-# because it tries sys.stdout.write(). Redirect to devnull to prevent this.
 if sys.stdout is None:
     sys.stdout = open(os.devnull, "w")
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w")
 
-# --- Log rotation (5 MB max, 2 backups) ---
 _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "eba_debug.log")
 _log_handler = logging.handlers.RotatingFileHandler(
     _log_path, maxBytes=5 * 1024 * 1024, backupCount=2, encoding="utf-8",
@@ -45,12 +32,9 @@ _log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(messa
 logging.root.addHandler(_log_handler)
 logging.root.setLevel(logging.DEBUG)
 
-# ---------------------------------------------------------------------------
-# Ensure FFmpeg is on PATH (user env var may not be inherited by this process)
-# ---------------------------------------------------------------------------
 if not shutil.which("ffmpeg"):
     for _d in [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg"),       # installed by our installer
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffmpeg", "bin"),
         r"C:\ffmpeg\bin",
         os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links"),
@@ -60,13 +44,7 @@ if not shutil.which("ffmpeg"):
             os.environ["PATH"] = _d + ";" + os.environ.get("PATH", "")
             break
 
-# ---------------------------------------------------------------------------
-# Expose PyTorch's bundled CUDA/cuDNN DLLs to ONNX Runtime
-# ---------------------------------------------------------------------------
-# onnxruntime-gpu requires cuDNN 9 + cuBLAS (cublasLt64_12.dll, cudnn_*.dll).
-# PyTorch's CUDA wheels already ship these DLLs in torch/lib/ — we just need
-# to add that directory to the Windows DLL search path before onnxruntime
-# loads its CUDA provider. Without this, ASR falls back to CPU (much slower).
+# Expose PyTorch's bundled CUDA/cuDNN DLLs so ONNX Runtime finds them
 try:
     import torch as _torch_probe
     _torch_lib = os.path.join(os.path.dirname(_torch_probe.__file__), "lib")
@@ -78,17 +56,13 @@ try:
 except Exception as _exc:
     logging.debug("Could not expose torch CUDA DLLs: %s", _exc)
 
-# ---------------------------------------------------------------------------
-# Configuration helpers
-# ---------------------------------------------------------------------------
-
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "config.json"
 
 DEFAULT_CONFIG = {
     "hf_token": "",
     "asr_model": "nemo-parakeet-tdt-0.6b-v3",
-    "language": "auto",  # "auto" = let Parakeet detect; set "de"/"en"/etc for a single-language bias
+    "language": "auto",
     "speaker_names": {},
     "output_dir": r"C:\EBA-Protokoll",
     "noise_reduction": True,
@@ -101,11 +75,9 @@ def load_config() -> dict:
         try:
             with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 saved = json.load(f)
-            merged = {**DEFAULT_CONFIG, **saved}
-            return merged
+            return {**DEFAULT_CONFIG, **saved}
         except Exception as exc:
             logging.warning("config.json corrupt, using defaults: %s", exc)
-            # Back up corrupt file so user can recover manually
             try:
                 bak = CONFIG_PATH.with_suffix(".json.bak")
                 shutil.copy2(CONFIG_PATH, bak)
@@ -129,8 +101,11 @@ def ensure_directories(base: str) -> None:
         os.makedirs(os.path.join(base, sub), exist_ok=True)
 
 
+def _safe_project_name(name: str) -> str:
+    return "".join(c if (c.isalnum() or c in "-_ ") else "_" for c in name)
+
+
 def compress_wav_to_flac(wav_path: str) -> str:
-    """Compress a WAV file to FLAC (lossless, ~50% smaller). Returns FLAC path or original on failure."""
     flac_path = wav_path.rsplit(".", 1)[0] + ".flac"
     try:
         result = subprocess.run(
@@ -145,17 +120,11 @@ def compress_wav_to_flac(wav_path: str) -> str:
     return wav_path
 
 
-# ---------------------------------------------------------------------------
-# Audio recording helpers — stream directly to WAV (constant memory)
-# ---------------------------------------------------------------------------
-
 MIC_SAMPLERATE = 16000
 MIC_CHANNELS = 1
 
 
 class MicRecorder:
-    """Records from the default microphone using sounddevice.
-    Streams directly to WAV file — memory stays constant regardless of duration."""
 
     def __init__(self, filepath: str, samplerate: int = MIC_SAMPLERATE):
         self.filepath = filepath
@@ -170,7 +139,7 @@ class MicRecorder:
 
         self._wf = wave.open(self.filepath, "wb")
         self._wf.setnchannels(MIC_CHANNELS)
-        self._wf.setsampwidth(2)  # int16
+        self._wf.setsampwidth(2)
         self._wf.setframerate(self.samplerate)
 
         self._running = True
@@ -209,8 +178,6 @@ class MicRecorder:
 
 
 class SystemAudioRecorder:
-    """Records system / loopback audio via PyAudioWPatch WASAPI loopback.
-    Streams directly to WAV file — memory stays constant regardless of duration."""
 
     def __init__(self, filepath: str):
         self.filepath = filepath
@@ -230,7 +197,6 @@ class SystemAudioRecorder:
 
             self._p = pyaudio.PyAudio()
 
-            # Find the default WASAPI loopback device
             wasapi_info = None
             for i in range(self._p.get_host_api_count()):
                 api = self._p.get_host_api_info_by_index(i)
@@ -243,7 +209,6 @@ class SystemAudioRecorder:
                 self._cleanup()
                 return
 
-            # Find the default loopback device
             loopback_device = None
             default_output_idx = wasapi_info.get("defaultOutputDevice", -1)
             default_output_name = ""
@@ -272,7 +237,6 @@ class SystemAudioRecorder:
             if self.channels < 1:
                 self.channels = 2
 
-            # Open WAV file for streaming write
             self._wf = wave.open(self.filepath, "wb")
             self._wf.setnchannels(self.channels)
             self._wf.setsampwidth(2)
@@ -309,7 +273,7 @@ class SystemAudioRecorder:
             with self._lock:
                 if self._wf:
                     self._wf.writeframesraw(in_data)
-        return (None, 0)  # 0 == paContinue
+        return (None, 0)
 
     def stop(self) -> None:
         self._running = False
@@ -338,7 +302,6 @@ class SystemAudioRecorder:
             self._p = None
 
     def has_audio_content(self) -> bool:
-        """Check whether the recorded file actually contains audible content."""
         if not os.path.exists(self.filepath):
             return False
         try:
@@ -357,10 +320,6 @@ class SystemAudioRecorder:
             return False
 
 
-# ---------------------------------------------------------------------------
-# Transcription + Diarization
-# ---------------------------------------------------------------------------
-
 
 def get_gpu_info() -> dict:
     info = {"cuda_available": False, "gpu_name": "Keine GPU erkannt", "vram_mb": 0}
@@ -376,9 +335,6 @@ def get_gpu_info() -> dict:
 
 
 def _log_memory(tag: str) -> None:
-    """Log RSS + CUDA memory at a checkpoint. Opt-in via config['debug_memory'].
-    Caller is responsible for gating on the flag; this helper unconditionally logs.
-    psutil is a soft dependency — if missing, RSS is omitted."""
     rss_mb = -1.0
     try:
         import psutil
@@ -398,15 +354,10 @@ def _log_memory(tag: str) -> None:
 
 
 def _load_audio_safe(filepath: str):
-    """Load audio as 16 kHz mono float32 numpy array.
-    Uses torchaudio first (handles most formats via FFmpeg), falls back to stdlib wave
-    + scipy polyphase resampling for WAV files when torchaudio is unavailable.
-    No normalization — amplifies noise floor on quiet recordings."""
     import numpy as np
 
     samples = None
 
-    # 1) torchaudio (preferred — high-quality Kaiser resampling, handles MP3/M4A/etc.)
     try:
         import torchaudio
         waveform, sample_rate = torchaudio.load(filepath)
@@ -418,7 +369,6 @@ def _load_audio_safe(filepath: str):
     except Exception:
         pass
 
-    # 2) stdlib wave module fallback (WAV only)
     if samples is None:
         try:
             with wave.open(filepath, "rb") as wf:
@@ -442,14 +392,9 @@ def _load_audio_safe(filepath: str):
                 from math import gcd
                 g = gcd(16000, sample_rate)
                 up, down = 16000 // g, sample_rate // g
-                # Always use polyphase filtering — handles any ratio including 44100->16000
-                # (up=160, down=441) with proper antialiasing. Kaiser beta=5.0 is SciPy's
-                # recommended default for speech.
                 samples = scipy.signal.resample_poly(
                     samples, up, down, window=("kaiser", 5.0),
                 ).astype(np.float32)
-
-            samples = samples.astype(np.float32)
         except Exception:
             raise RuntimeError(
                 f"Audiodatei konnte nicht geladen werden: {filepath}\n"
@@ -461,8 +406,6 @@ def _load_audio_safe(filepath: str):
 
 
 def _reduce_noise(audio, sr: int = 16000):
-    """Apply spectral gating noise reduction optimized for speech.
-    Uses noisereduce with parameters tuned per library source docs (n_fft=512 for speech)."""
     import noisereduce as nr
     return nr.reduce_noise(
         y=audio,
@@ -475,8 +418,6 @@ def _reduce_noise(audio, sr: int = 16000):
 
 
 def _segment_results_to_dicts(segment_results, speaker_label: str = None) -> list[dict]:
-    """Convert onnx-asr SegmentResult objects to segment dicts.
-    Each SegmentResult has .text, .start, .end attributes."""
     segments = []
     for seg in segment_results:
         text = seg.text.strip() if hasattr(seg, 'text') else str(seg).strip()
@@ -491,12 +432,6 @@ def _segment_results_to_dicts(segment_results, speaker_label: str = None) -> lis
 
 
 def _assign_speakers_to_segments(diarization, segments: list[dict]) -> list[dict]:
-    """Assign pyannote speaker labels to transcription segments by maximum time overlap.
-
-    diarization: pyannote Annotation object from Pipeline.__call__()
-    segments: list of {"start", "end", "speaker", "text"} dicts from ASR
-
-    Returns the same segments with "speaker" field updated."""
     dia_turns = [
         (turn.start, turn.end, speaker)
         for turn, _, speaker in diarization.itertracks(yield_label=True)
@@ -518,7 +453,6 @@ _asr_cache = {"key": None, "model": None}
 
 
 def _save_audio_to_tempfile(audio, sr: int = 16000) -> str:
-    """Save numpy audio to a temporary WAV file for ASR engines that need file paths."""
     import tempfile
     import numpy as np
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
@@ -543,17 +477,10 @@ def transcribe_and_diarize(
     language: str = "auto",
     debug_memory: bool = False,
 ) -> list[dict]:
-    """Transcribe mic + system tracks using Parakeet TDT (onnx-asr) + pyannote diarization.
-    Returns merged, sorted segments. Checks cancel_event between stages.
-    On diarization failure, returns transcript without speaker labels.
-
-    language: "auto" for automatic detection (handles code-switching), or an ISO code
-              like "de"/"en" to bias decoding toward that language.
-    debug_memory: when True, logs RSS + CUDA memory at pipeline checkpoints."""
+    """Transcribe mic + system tracks using Parakeet TDT + pyannote diarization.
+    Returns merged, sorted segments. On diarization failure, returns transcript without speaker labels."""
     import onnx_asr
 
-    # Lift torch to function scope — used later for pre-diarization VRAM release
-    # and (when debug_memory=True) for peak-stat reset. Import is cheap once loaded.
     try:
         import torch as _torch
     except ImportError:
@@ -566,9 +493,6 @@ def transcribe_and_diarize(
         if debug_memory:
             _log_memory(tag)
 
-    # Build kwargs for asr_model.recognize() — pnc always on; language only when forced.
-    # channel="mean" mixes stereo (system loopback audio) down to mono — Parakeet/Canary
-    # only accept mono input. No-op for already-mono audio.
     recognize_kwargs = {"pnc": True, "channel": "mean"}
     if language and language != "auto":
         recognize_kwargs["language"] = language
@@ -580,7 +504,6 @@ def transcribe_and_diarize(
     def cancelled() -> bool:
         return cancel_event is not None and cancel_event.is_set()
 
-    # --- Load or reuse cached onnx-asr model ---
     has_mic = bool(mic_path) and os.path.exists(mic_path)
     has_sys = bool(system_path) and os.path.exists(system_path)
 
@@ -590,12 +513,8 @@ def transcribe_and_diarize(
         asr_model = _asr_cache["model"]
     else:
         status("Lade Parakeet ASR-Modell...", 0)
-        # GPU auto-detected: uses CUDAExecutionProvider if onnxruntime-gpu installed
         asr_base = onnx_asr.load_model(asr_model_name)
-        # onnx-asr >= 0.11 requires an explicit VAD instance; default is silero
         vad = onnx_asr.load_vad()
-        # Mild padding (100 ms vs default 30 ms) prevents clipping short syllables
-        # at segment edges without introducing the phantom-word issue of 200 ms pads.
         asr_model = asr_base.with_vad(vad, speech_pad_ms=100)
         _asr_cache["model"] = asr_model
         _asr_cache["key"] = cache_key
@@ -603,7 +522,6 @@ def transcribe_and_diarize(
     if cancelled():
         return []
 
-    # --- Parallel noise reduction ---
     mic_audio = sys_audio = None
     nr_errors = {}
 
@@ -637,31 +555,23 @@ def transcribe_and_diarize(
 
     all_segments = []
 
-    # --- Mic track (all segments = "Ich") ---
     if has_mic and not cancelled():
         status("Transkribiere Mikrofon...", 17)
         if mic_audio is not None:
-            # Denoised audio — save to temp file for onnx-asr
             tmp = _save_audio_to_tempfile(mic_audio)
             try:
                 results = list(asr_model.recognize(tmp, **recognize_kwargs))
             finally:
                 os.unlink(tmp)
         else:
-            # Original file — pass directly
             results = list(asr_model.recognize(mic_path, **recognize_kwargs))
 
         all_segments.extend(_segment_results_to_dicts(results, speaker_label="Ich"))
 
-        if mic_audio is not None:
-            del mic_audio
-            mic_audio = None
-
+        del mic_audio
         mem("after_mic_asr")
 
-    # --- System track (needs diarization) ---
     if has_sys and not cancelled():
-        # Always load sys_audio into memory — needed for diarization later
         if sys_audio is None:
             sys_audio = _load_audio_safe(system_path)
 
@@ -678,11 +588,6 @@ def transcribe_and_diarize(
         sys_segments = _segment_results_to_dicts(results)
 
         if sys_segments and not cancelled():
-            # Release intermediate ORT tensors and any dead numpy arrays before
-            # pyannote loads its segmentation + embedding models onto the GPU.
-            # Meaningful on low-VRAM GPUs where ASR cache + diarization stack tight.
-            # Safe: ONNX Runtime uses its own CUDA allocator, so this does not
-            # invalidate the cached ASR model in _asr_cache.
             gc.collect()
             if _torch is not None and _torch.cuda.is_available():
                 _torch.cuda.empty_cache()
@@ -695,7 +600,6 @@ def transcribe_and_diarize(
 
                 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-                # pyannote v4.0+ renamed use_auth_token to token
                 try:
                     diarize_pipeline = DiarizationPipeline.from_pretrained(
                         "pyannote/speaker-diarization-3.1",
@@ -708,19 +612,14 @@ def transcribe_and_diarize(
                     )
                 diarize_pipeline.to(torch.device(device))
 
-                # Reduce batch sizes — pyannote default=32 causes OOM/slowdown on GTX GPUs
                 pipe = getattr(diarize_pipeline, '_pipeline', diarize_pipeline)
                 if hasattr(pipe, 'embedding_batch_size'):
                     pipe.embedding_batch_size = 8
                 if hasattr(pipe, 'segmentation_batch_size'):
                     pipe.segmentation_batch_size = 8
-                # Re-enable TF32 — pyannote disables it, losing 10-15% GPU speed
                 if device == "cuda":
                     torch.backends.cuda.matmul.allow_tf32 = True
 
-                # inference_mode is a strict superset of no_grad (also disables view
-                # tracking) — small but free speedup on repeated tensor ops. pyannote
-                # uses no_grad internally; wrapping externally is compatible.
                 with torch.inference_mode():
                     try:
                         diarization = diarize_pipeline(
@@ -759,13 +658,8 @@ def format_transcript(segments: list[dict], speaker_names: dict) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Speaker Renaming Dialog
-# ---------------------------------------------------------------------------
-
 
 class SpeakerRenameDialog(tk.Toplevel):
-    """Modal dialog that lets the user assign real names to detected speakers."""
 
     def __init__(self, parent, segments: list[dict], existing_names: dict):
         super().__init__(parent)
@@ -779,7 +673,6 @@ class SpeakerRenameDialog(tk.Toplevel):
         self.confirmed: bool = False
         self._entries: dict[str, tk.StringVar] = {}
 
-        # Collect unique speakers (exclude "Ich")
         speaker_quotes: dict[str, str] = {}
         for seg in segments:
             sp = seg["speaker"]
@@ -858,10 +751,6 @@ class SpeakerRenameDialog(tk.Toplevel):
         self.destroy()
 
 
-# ---------------------------------------------------------------------------
-# Main Application
-# ---------------------------------------------------------------------------
-
 
 class EBAProtokollApp(tk.Tk):
     def __init__(self):
@@ -874,7 +763,6 @@ class EBAProtokollApp(tk.Tk):
         self.config_data = load_config()
         ensure_directories(self.config_data["output_dir"])
 
-        # State
         self._recording = False
         self._mic_recorder: MicRecorder | None = None
         self._sys_recorder: SystemAudioRecorder | None = None
@@ -886,7 +774,6 @@ class EBAProtokollApp(tk.Tk):
         self._last_embeddings: dict = {}
         self._auto_names: dict = {}
 
-        # Style
         style = ttk.Style(self)
         try:
             style.theme_use("vista")
@@ -896,14 +783,12 @@ class EBAProtokollApp(tk.Tk):
             except Exception as exc:
                 logging.debug("Theme fallback failed: %s", exc)
 
-        # Notebook (tabs)
         self._notebook = ttk.Notebook(self)
         self._notebook.pack(fill="both", expand=True, padx=6, pady=(6, 0))
 
         self._build_recording_tab()
         self._build_settings_tab()
 
-        # Status bar
         self._statusbar = ttk.Label(
             self, text="Bereit", relief="sunken", anchor="w", padding=(6, 2)
         )
@@ -911,17 +796,12 @@ class EBAProtokollApp(tk.Tk):
 
         self._update_gpu_status()
 
-        # Persist config on close
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    # ------------------------------------------------------------------
-    # Recording Tab
-    # ------------------------------------------------------------------
     def _build_recording_tab(self) -> None:
         tab = ttk.Frame(self._notebook, padding=10)
         self._notebook.add(tab, text="  Aufnahme  ")
 
-        # Project name
         proj_frame = ttk.LabelFrame(tab, text="Projektname", padding=6)
         proj_frame.pack(fill="x", pady=(0, 8))
 
@@ -931,14 +811,12 @@ class EBAProtokollApp(tk.Tk):
             fill="x"
         )
 
-        # Timer
         self._timer_var = tk.StringVar(value="00:00:00")
         timer_label = ttk.Label(
             tab, textvariable=self._timer_var, font=("Consolas", 28), anchor="center"
         )
         timer_label.pack(pady=(4, 8))
 
-        # Buttons
         btn_frame = ttk.Frame(tab)
         btn_frame.pack(fill="x", pady=4)
 
@@ -970,7 +848,6 @@ class EBAProtokollApp(tk.Tk):
         )
         self._import_btn.pack(side="left", expand=True, fill="x", padx=(4, 0))
 
-        # Progress
         self._progress_var = tk.DoubleVar(value=0)
         self._progress = ttk.Progressbar(
             tab, variable=self._progress_var, mode="determinate", maximum=100, length=400
@@ -982,20 +859,29 @@ class EBAProtokollApp(tk.Tk):
             anchor="w", pady=2
         )
 
-        # Last file
         self._lastfile_var = tk.StringVar(value="")
         ttk.Label(tab, textvariable=self._lastfile_var, foreground="gray", wraplength=560).pack(
             anchor="w", pady=(8, 0)
         )
 
-    # ------------------------------------------------------------------
-    # Settings Tab
-    # ------------------------------------------------------------------
+    def _build_mapped_combobox(self, parent, options: list[tuple[str, str]],
+                               config_key: str, default: str, width: int = 50) -> tk.StringVar:
+        label_to_code = {lbl: code for lbl, code in options}
+        code_to_label = {code: lbl for lbl, code in options}
+        current = self.config_data.get(config_key, default)
+        code_var = tk.StringVar(value=current)
+        display_var = tk.StringVar(value=code_to_label.get(current, options[0][0]))
+        combo = ttk.Combobox(parent, textvariable=display_var,
+                             values=[lbl for lbl, _ in options], state="readonly", width=width)
+        combo.pack(anchor="w")
+        combo.bind("<<ComboboxSelected>>",
+                   lambda _: code_var.set(label_to_code.get(display_var.get(), default)))
+        return code_var
+
     def _build_settings_tab(self) -> None:
         tab = ttk.Frame(self._notebook, padding=10)
         self._notebook.add(tab, text="  Einstellungen  ")
 
-        # HuggingFace token
         token_frame = ttk.LabelFrame(tab, text="HuggingFace Token (fuer Diarisierung)", padding=6)
         token_frame.pack(fill="x", pady=(0, 8))
 
@@ -1004,7 +890,6 @@ class EBAProtokollApp(tk.Tk):
             fill="x"
         )
 
-        # ASR model selection
         model_frame = ttk.LabelFrame(tab, text="ASR-Modell", padding=6)
         model_frame.pack(fill="x", pady=(0, 8))
 
@@ -1016,35 +901,11 @@ class EBAProtokollApp(tk.Tk):
             foreground="gray",
         ).pack(anchor="w", pady=(0, 4))
 
-        _MODEL_OPTIONS = [
+        self._model_var = self._build_mapped_combobox(model_frame, [
             ("Canary 1b v2 (maximale Genauigkeit, 25 Sprachen)", "nemo-canary-1b-v2"),
             ("Parakeet TDT 0.6b v3 (schnell, 25 Sprachen)", "nemo-parakeet-tdt-0.6b-v3"),
-        ]
-        self._model_label_to_code = {lbl: code for lbl, code in _MODEL_OPTIONS}
-        self._model_code_to_label = {code: lbl for lbl, code in _MODEL_OPTIONS}
+        ], "asr_model", "nemo-parakeet-tdt-0.6b-v3")
 
-        current_model_code = self.config_data.get("asr_model", "nemo-parakeet-tdt-0.6b-v3")
-        current_model_label = self._model_code_to_label.get(current_model_code, _MODEL_OPTIONS[1][0])
-
-        self._model_var = tk.StringVar(value=current_model_code)
-        self._model_display_var = tk.StringVar(value=current_model_label)
-
-        model_combo = ttk.Combobox(
-            model_frame,
-            textvariable=self._model_display_var,
-            values=[lbl for lbl, _ in _MODEL_OPTIONS],
-            state="readonly",
-            width=50,
-        )
-        model_combo.pack(anchor="w")
-
-        def _on_model_change(_event=None):
-            label = self._model_display_var.get()
-            self._model_var.set(self._model_label_to_code.get(label, "nemo-parakeet-tdt-0.6b-v3"))
-
-        model_combo.bind("<<ComboboxSelected>>", _on_model_change)
-
-        # Language hint (auto by default — required for code-switched meetings)
         lang_frame = ttk.LabelFrame(tab, text="Sprache", padding=6)
         lang_frame.pack(fill="x", pady=(0, 8))
 
@@ -1056,44 +917,13 @@ class EBAProtokollApp(tk.Tk):
             foreground="gray",
         ).pack(anchor="w", pady=(0, 4))
 
-        # Display label -> config value
-        _LANG_OPTIONS = [
+        self._lang_var = self._build_mapped_combobox(lang_frame, [
             ("Automatisch (mehrsprachig, empfohlen)", "auto"),
-            ("Deutsch", "de"),
-            ("Englisch", "en"),
-            ("Spanisch", "es"),
-            ("Franzoesisch", "fr"),
-            ("Italienisch", "it"),
-            ("Portugiesisch", "pt"),
-            ("Niederlaendisch", "nl"),
-            ("Polnisch", "pl"),
-        ]
-        self._lang_label_to_code = {lbl: code for lbl, code in _LANG_OPTIONS}
-        self._lang_code_to_label = {code: lbl for lbl, code in _LANG_OPTIONS}
+            ("Deutsch", "de"), ("Englisch", "en"), ("Spanisch", "es"),
+            ("Franzoesisch", "fr"), ("Italienisch", "it"), ("Portugiesisch", "pt"),
+            ("Niederlaendisch", "nl"), ("Polnisch", "pl"),
+        ], "language", "auto", width=40)
 
-        current_code = self.config_data.get("language", "auto")
-        current_label = self._lang_code_to_label.get(current_code, _LANG_OPTIONS[0][0])
-
-        # Internal var holds the ISO code; combobox works with display labels
-        self._lang_var = tk.StringVar(value=current_code)
-        self._lang_display_var = tk.StringVar(value=current_label)
-
-        lang_combo = ttk.Combobox(
-            lang_frame,
-            textvariable=self._lang_display_var,
-            values=[lbl for lbl, _ in _LANG_OPTIONS],
-            state="readonly",
-            width=40,
-        )
-        lang_combo.pack(anchor="w")
-
-        def _on_lang_change(_event=None):
-            label = self._lang_display_var.get()
-            self._lang_var.set(self._lang_label_to_code.get(label, "auto"))
-
-        lang_combo.bind("<<ComboboxSelected>>", _on_lang_change)
-
-        # Output directory
         dir_frame = ttk.LabelFrame(tab, text="Ausgabe-Verzeichnis", padding=6)
         dir_frame.pack(fill="x", pady=(0, 8))
 
@@ -1108,7 +938,6 @@ class EBAProtokollApp(tk.Tk):
             side="left", padx=(4, 0)
         )
 
-        # Noise reduction
         nr_frame = ttk.LabelFrame(tab, text="Audio-Vorverarbeitung", padding=6)
         nr_frame.pack(fill="x", pady=(0, 8))
 
@@ -1126,7 +955,6 @@ class EBAProtokollApp(tk.Tk):
             foreground="gray",
         ).pack(anchor="w", pady=(2, 0))
 
-        # GPU info
         gpu_frame = ttk.LabelFrame(tab, text="GPU Status", padding=6)
         gpu_frame.pack(fill="x", pady=(0, 8))
 
@@ -1135,14 +963,10 @@ class EBAProtokollApp(tk.Tk):
             anchor="w"
         )
 
-        # Save button
         ttk.Button(tab, text="Einstellungen speichern", command=self._save_settings).pack(
             pady=10
         )
 
-    # ------------------------------------------------------------------
-    # Settings helpers
-    # ------------------------------------------------------------------
     def _browse_dir(self) -> None:
         d = filedialog.askdirectory(initialdir=self._dir_var.get())
         if d:
@@ -1152,10 +976,8 @@ class EBAProtokollApp(tk.Tk):
         self.config_data["hf_token"] = self._token_var.get().strip()
         self.config_data["output_dir"] = self._dir_var.get().strip()
         self.config_data["noise_reduction"] = self._nr_var.get()
-        if hasattr(self, "_lang_var"):
-            self.config_data["language"] = self._lang_var.get()
-        if hasattr(self, "_model_var"):
-            self.config_data["asr_model"] = self._model_var.get()
+        self.config_data["language"] = self._lang_var.get()
+        self.config_data["asr_model"] = self._model_var.get()
 
     def _save_settings(self) -> None:
         self._sync_config_from_ui()
@@ -1172,9 +994,6 @@ class EBAProtokollApp(tk.Tk):
         self._gpu_info_var.set(text)
         self._statusbar.config(text=text)
 
-    # ------------------------------------------------------------------
-    # Recording
-    # ------------------------------------------------------------------
     def _toggle_recording(self) -> None:
         if not self._recording:
             self._start_recording()
@@ -1192,17 +1011,10 @@ class EBAProtokollApp(tk.Tk):
         aufnahmen = os.path.join(base_dir, "aufnahmen")
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        safe_project = "".join(
-            c if (c.isalnum() or c in "-_ ") else "_" for c in project
-        )
-        self._last_mic_path = os.path.join(
-            aufnahmen, f"{safe_project}_{timestamp}_mic.wav"
-        )
-        self._last_sys_path = os.path.join(
-            aufnahmen, f"{safe_project}_{timestamp}_system.wav"
-        )
+        prefix = f"{_safe_project_name(project)}_{timestamp}"
+        self._last_mic_path = os.path.join(aufnahmen, f"{prefix}_mic.wav")
+        self._last_sys_path = os.path.join(aufnahmen, f"{prefix}_system.wav")
 
-        # Start mic recorder
         try:
             self._mic_recorder = MicRecorder(self._last_mic_path)
             self._mic_recorder.start()
@@ -1213,7 +1025,6 @@ class EBAProtokollApp(tk.Tk):
             )
             return
 
-        # Start system audio recorder
         self._sys_recorder = SystemAudioRecorder(self._last_sys_path)
         self._sys_recorder.start()
 
@@ -1259,16 +1070,9 @@ class EBAProtokollApp(tk.Tk):
     def _update_timer(self) -> None:
         if not self._recording:
             return
-        elapsed = time.time() - self._record_start
-        h = int(elapsed) // 3600
-        m = (int(elapsed) % 3600) // 60
-        s = int(elapsed) % 60
-        self._timer_var.set(f"{h:02d}:{m:02d}:{s:02d}")
+        self._timer_var.set(format_timestamp(time.time() - self._record_start))
         self._timer_id = self.after(500, self._update_timer)
 
-    # ------------------------------------------------------------------
-    # File import
-    # ------------------------------------------------------------------
     def _import_file(self) -> None:
         filepath = filedialog.askopenfilename(
             title="Audio-/Video-Datei importieren",
@@ -1296,11 +1100,7 @@ class EBAProtokollApp(tk.Tk):
         self._transcribe_btn.config(state="normal")
         self._status_var.set("Datei importiert. Bereit zur Transkription.")
 
-    # ------------------------------------------------------------------
-    # Transcription
-    # ------------------------------------------------------------------
     def _start_transcription(self) -> None:
-        # Validate inputs
         hf_token = self._token_var.get().strip()
         has_system = bool(self._last_sys_path) and os.path.exists(self._last_sys_path)
         has_mic = bool(self._last_mic_path) and os.path.exists(self._last_mic_path)
@@ -1320,19 +1120,15 @@ class EBAProtokollApp(tk.Tk):
             )
             return
 
-        # Read all tkinter vars on main thread before launching worker (thread safety)
-        # Read language on main thread (tkinter vars are not thread-safe)
-        language = self._lang_var.get() if hasattr(self, "_lang_var") else self.config_data.get("language", "auto")
         worker_args = {
             "hf_token": hf_token,
-            "model": (self._model_var.get() if hasattr(self, "_model_var")
-                      else self.config_data.get("asr_model", "nemo-parakeet-tdt-0.6b-v3")),
+            "model": self._model_var.get(),
             "base_dir": self._dir_var.get().strip() or DEFAULT_CONFIG["output_dir"],
             "project": self._project_var.get().strip() or "Besprechung",
             "mic_path": self._last_mic_path,
             "sys_path": self._last_sys_path,
             "noise_reduction": self._nr_var.get(),
-            "language": language,
+            "language": self._lang_var.get(),
             "debug_memory": bool(self.config_data.get("debug_memory", False)),
         }
 
@@ -1353,11 +1149,9 @@ class EBAProtokollApp(tk.Tk):
         self._set_status("Wird abgebrochen...")
 
     def _transcription_worker(self, args: dict) -> None:
-        """Runs in a background thread."""
         try:
             sys_path = args["sys_path"]
 
-            # Check if system audio is silent (skip diarization on empty loopback)
             if (sys_path and self._sys_recorder
                     and self._sys_recorder.filepath == sys_path
                     and not self._sys_recorder.has_audio_content()):
@@ -1383,14 +1177,12 @@ class EBAProtokollApp(tk.Tk):
                 self._finish_transcription([])
                 return
 
-            # Save transcript
             base_dir = args["base_dir"]
             ensure_directories(base_dir)
 
-            project = args["project"]
-            safe_project = "".join(c if (c.isalnum() or c in "-_ ") else "_" for c in project)
             out_path = os.path.join(
-                base_dir, "transkripte", f"{safe_project}_{datetime.now():%Y-%m-%d_%H%M%S}.txt"
+                base_dir, "transkripte",
+                f"{_safe_project_name(args['project'])}_{datetime.now():%Y-%m-%d_%H%M%S}.txt",
             )
 
             speaker_names = dict(self.config_data.get("speaker_names", {}))
@@ -1402,7 +1194,6 @@ class EBAProtokollApp(tk.Tk):
             else:
                 self._set_status(f"Transkript gespeichert: {out_path}")
 
-            # Extract speaker embeddings for voice profiles (before FLAC compression changes file)
             self._last_embeddings = {}
             self._auto_names = {}
             if sys_path and all_segments and args["hf_token"] and not was_cancelled:
@@ -1418,7 +1209,6 @@ class EBAProtokollApp(tk.Tk):
                 except Exception as exc:
                     logging.warning("Voice profile extraction failed: %s", exc)
 
-            # Compress recordings to FLAC in background (lossless, ~50% smaller)
             for wav in (args["mic_path"], args["sys_path"]):
                 if wav and os.path.exists(wav) and wav.endswith(".wav"):
                     threading.Thread(target=compress_wav_to_flac, args=(wav,), daemon=True).start()
@@ -1431,7 +1221,6 @@ class EBAProtokollApp(tk.Tk):
             self._finish_transcription([])
 
     def _set_status(self, text: str, pct: int = -1) -> None:
-        """Thread-safe status update with optional progress percentage."""
         def _update():
             self._status_var.set(text)
             if pct >= 0:
@@ -1439,7 +1228,6 @@ class EBAProtokollApp(tk.Tk):
         self.after(0, _update)
 
     def _finish_transcription(self, segments: list[dict], out_path: str = "") -> None:
-        """Called from worker thread when done."""
 
         def _ui_finish():
             self._progress_var.set(100)
@@ -1459,10 +1247,7 @@ class EBAProtokollApp(tk.Tk):
         self.after(0, _ui_finish)
 
     def _show_speaker_rename(self, segments: list[dict], out_path: str) -> None:
-        """Show the speaker renaming dialog, then re-save the transcript and update voice profiles."""
         existing_names = dict(self.config_data.get("speaker_names", {}))
-
-        # Merge auto-identified names from voice profiles
         for speaker_id, name in self._auto_names.items():
             existing_names[speaker_id] = name
 
@@ -1476,7 +1261,6 @@ class EBAProtokollApp(tk.Tk):
         self.config_data["speaker_names"] = new_names
         save_config(self.config_data)
 
-        # Update voice profiles with confirmed names
         if self._last_embeddings:
             try:
                 from voice_profiles import update_profiles
@@ -1495,9 +1279,6 @@ class EBAProtokollApp(tk.Tk):
             except Exception as exc:
                 self._status_var.set(f"Fehler beim Speichern: {exc}")
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
     def _on_close(self) -> None:
         if self._recording:
             if not messagebox.askyesno(
@@ -1507,16 +1288,11 @@ class EBAProtokollApp(tk.Tk):
                 return
             self._stop_recording()
 
-        # Persist any changed settings
         self._sync_config_from_ui()
         save_config(self.config_data)
 
         self.destroy()
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     app = EBAProtokollApp()

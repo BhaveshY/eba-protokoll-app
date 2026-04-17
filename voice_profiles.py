@@ -1,14 +1,6 @@
-"""
-Speaker Voice Profiles
-======================
-Stores speaker voice embeddings for automatic identification across meetings.
-Uses pyannote's WeSpeaker embedding model (256-dim vectors, cosine similarity).
-
-Architecture follows meetscribe's proven approach:
-- Top N longest segments averaged per speaker
-- Greedy 1:1 matching above similarity threshold
-- Weighted running average for profile updates across sessions
-"""
+"""Speaker voice profiles for automatic identification across meetings.
+Uses pyannote WeSpeaker embeddings (256-dim, cosine similarity) with
+greedy 1:1 matching and weighted running-average profile updates."""
 
 import gc
 import json
@@ -20,8 +12,13 @@ from pathlib import Path
 
 PROFILES_PATH = Path(__file__).resolve().parent / "speaker_profiles.json"
 SIMILARITY_THRESHOLD = 0.65
-MIN_SEGMENT_DURATION = 1.5  # seconds — shorter clips give unreliable embeddings
+MIN_SEGMENT_DURATION = 1.5
 MAX_SEGMENTS_PER_SPEAKER = 10
+
+
+def _normalize(v):
+    norm = np.linalg.norm(v)
+    return v / norm if norm > 0 else v
 
 
 def load_profiles(path: str = None) -> dict:
@@ -66,9 +63,6 @@ def extract_speaker_embeddings(
     segments: list,
     hf_token: str,
 ) -> dict:
-    """Extract average embedding per speaker from diarized segments.
-    Loads audio from file and embedding model, extracts embeddings, frees both.
-    Returns {speaker_label: np.ndarray(256,)}."""
     import torch
     from pyannote.audio import Inference, Model
 
@@ -121,11 +115,7 @@ def extract_speaker_embeddings(
                 continue
 
         if embs:
-            avg = np.mean(embs, axis=0)
-            norm = np.linalg.norm(avg)
-            if norm > 0:
-                avg = avg / norm
-            embeddings[speaker] = avg
+            embeddings[speaker] = _normalize(np.mean(embs, axis=0))
 
     del model, inference
     gc.collect()
@@ -136,9 +126,6 @@ def extract_speaker_embeddings(
 
 
 def identify_speakers(embeddings: dict, profiles: dict) -> dict:
-    """Match speaker embeddings against known profiles.
-    Returns {speaker_id: profile_name} for matches above threshold.
-    Uses greedy 1:1 matching (best similarity first) like meetscribe."""
     if not profiles or not embeddings:
         return {}
 
@@ -168,8 +155,6 @@ def update_profiles(
     embeddings: dict,
     path: str = None,
 ) -> None:
-    """Update profile database with confirmed speaker names and their embeddings.
-    Uses weighted running average for existing profiles (improves accuracy over time)."""
     profiles = load_profiles(path)
 
     for speaker_id, name in confirmed_names.items():
@@ -182,10 +167,7 @@ def update_profiles(
             # Weighted running average (like meetscribe)
             old = profiles[name]
             n = old["n_sessions"]
-            merged = (old["embedding"] * n + new_emb) / (n + 1)
-            norm = np.linalg.norm(merged)
-            if norm > 0:
-                merged = merged / norm
+            merged = _normalize((old["embedding"] * n + new_emb) / (n + 1))
             profiles[name] = {"embedding": merged, "n_sessions": n + 1}
         else:
             profiles[name] = {"embedding": new_emb, "n_sessions": 1}
