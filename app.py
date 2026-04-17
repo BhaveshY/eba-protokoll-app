@@ -302,20 +302,42 @@ class SystemAudioRecorder:
             self._p = None
 
     def has_audio_content(self) -> bool:
+        # Samples windows across the file; the old "first 5 s" check misfired
+        # when system audio started late (common — participant unmutes after t=0).
         if not os.path.exists(self.filepath):
             return False
         try:
             import numpy as np
+            threshold = 50.0
+            num_windows = 5
             with wave.open(self.filepath, "rb") as wf:
                 n_frames = wf.getnframes()
                 if n_frames == 0:
                     return False
-                check_frames = min(n_frames, wf.getframerate() * 5)
-                raw = wf.readframes(check_frames)
+                frame_rate = wf.getframerate() or 16000
+                window_frames = min(frame_rate, n_frames)
 
-            samples = np.frombuffer(raw, dtype=np.int16)
-            rms = np.sqrt(np.mean(samples.astype(np.float64) ** 2))
-            return rms > 50
+                if n_frames <= window_frames:
+                    wf.setpos(0)
+                    raw = wf.readframes(n_frames)
+                    samples = np.frombuffer(raw, dtype=np.int16)
+                    if samples.size == 0:
+                        return False
+                    rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+                    return rms > threshold
+
+                step = (n_frames - window_frames) // (num_windows - 1)
+                for i in range(num_windows):
+                    pos = min(i * step, n_frames - window_frames)
+                    wf.setpos(pos)
+                    raw = wf.readframes(window_frames)
+                    samples = np.frombuffer(raw, dtype=np.int16)
+                    if samples.size == 0:
+                        continue
+                    rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+                    if rms > threshold:
+                        return True
+            return False
         except Exception:
             return False
 
@@ -432,20 +454,36 @@ def _segment_results_to_dicts(segment_results, speaker_label: str = None) -> lis
 
 
 def _assign_speakers_to_segments(diarization, segments: list[dict]) -> list[dict]:
+    import numpy as np
+
     dia_turns = [
         (turn.start, turn.end, speaker)
         for turn, _, speaker in diarization.itertracks(yield_label=True)
     ]
-    for seg in segments:
-        seg_start, seg_end = seg["start"], seg["end"]
-        best_speaker = "Unbekannt"
-        best_overlap = 0.0
-        for d_start, d_end, d_speaker in dia_turns:
-            overlap = max(0.0, min(seg_end, d_end) - max(seg_start, d_start))
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_speaker = d_speaker
-        seg["speaker"] = best_speaker
+    if not segments:
+        return segments
+    if not dia_turns:
+        for seg in segments:
+            seg["speaker"] = "Unbekannt"
+        return segments
+
+    turn_starts = np.fromiter((t[0] for t in dia_turns), dtype=np.float64, count=len(dia_turns))
+    turn_ends = np.fromiter((t[1] for t in dia_turns), dtype=np.float64, count=len(dia_turns))
+    speakers = [t[2] for t in dia_turns]
+
+    seg_starts = np.fromiter((s["start"] for s in segments), dtype=np.float64, count=len(segments))
+    seg_ends = np.fromiter((s["end"] for s in segments), dtype=np.float64, count=len(segments))
+
+    # overlap[i, j] = max(0, min(seg_end_i, turn_end_j) - max(seg_start_i, turn_start_j))
+    overlap = np.minimum(seg_ends[:, None], turn_ends[None, :]) \
+              - np.maximum(seg_starts[:, None], turn_starts[None, :])
+    np.maximum(overlap, 0.0, out=overlap)
+
+    best_idx = overlap.argmax(axis=1)
+    best_overlap = overlap[np.arange(len(segments)), best_idx]
+
+    for i, seg in enumerate(segments):
+        seg["speaker"] = speakers[int(best_idx[i])] if best_overlap[i] > 0 else "Unbekannt"
     return segments
 
 

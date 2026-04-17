@@ -129,19 +129,28 @@ def identify_speakers(embeddings: dict, profiles: dict) -> dict:
     if not profiles or not embeddings:
         return {}
 
-    candidates = []
-    for speaker_id, emb in embeddings.items():
-        for name, profile in profiles.items():
-            sim = float(np.dot(emb, profile["embedding"]))
-            candidates.append((sim, speaker_id, name))
+    speaker_ids = list(embeddings.keys())
+    profile_names = list(profiles.keys())
 
-    candidates.sort(reverse=True)
+    emb_matrix = np.stack([embeddings[s] for s in speaker_ids]).astype(np.float32)
+    prof_matrix = np.stack([profiles[n]["embedding"] for n in profile_names]).astype(np.float32)
 
-    matches = {}
-    used_profiles = set()
-    for sim, speaker_id, name in candidates:
-        if sim < SIMILARITY_THRESHOLD:
+    sim = emb_matrix @ prof_matrix.T  # (n_speakers, n_profiles)
+
+    # Flatten and rank by similarity, then do greedy 1:1 assignment.
+    flat = sim.ravel()
+    order = np.argsort(-flat, kind="stable")
+
+    matches: dict = {}
+    used_profiles: set = set()
+    n_profiles = len(profile_names)
+    for idx in order:
+        s = float(flat[idx])
+        if s < SIMILARITY_THRESHOLD:
             break
+        i, j = divmod(int(idx), n_profiles)
+        speaker_id = speaker_ids[i]
+        name = profile_names[j]
         if speaker_id in matches or name in used_profiles:
             continue
         matches[speaker_id] = name
