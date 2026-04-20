@@ -1,0 +1,80 @@
+/**
+ * Typed IPC contract between Electron main and renderer.
+ *
+ * The preload script exposes `window.eba` with these methods.
+ */
+
+export interface AppConfig {
+  language: string;
+  speakerNames: Record<string, string>;
+  outputDir: string;
+  keytermProfile: string;
+  deepgramEndpoint: string;
+  systemAudioDevice: string;
+}
+
+export const DEFAULT_CONFIG: AppConfig = {
+  language: "multi",
+  speakerNames: {},
+  outputDir: "",
+  keytermProfile: "default",
+  deepgramEndpoint: "https://api.eu.deepgram.com",
+  systemAudioDevice: "",
+};
+
+export interface RecentTranscript {
+  name: string;
+  path: string;
+  size: number;
+  mtime: number;
+}
+
+export interface KeytermProfiles {
+  profiles: Record<string, string[]>;
+}
+
+export interface EbaApi {
+  platform: "darwin" | "win32" | "linux";
+
+  // Config (non-secret, JSON on disk)
+  config: {
+    get(): Promise<AppConfig>;
+    set(patch: Partial<AppConfig>): Promise<AppConfig>;
+  };
+
+  // API key (OS-level secure storage via safeStorage)
+  apiKey: {
+    get(): Promise<string>;
+    set(value: string): Promise<void>;
+  };
+
+  // Filesystem helpers
+  fs: {
+    ensureOutputDirs(base: string): Promise<void>;
+    writeTranscript(path: string, text: string): Promise<void>;
+    listTranscripts(base: string, limit?: number): Promise<RecentTranscript[]>;
+    readFileAsBytes(path: string): Promise<ArrayBuffer>;
+    revealInFolder(path: string): Promise<void>;
+    openPath(path: string): Promise<void>;
+    chooseDirectory(initial?: string): Promise<string | null>;
+    chooseAudioFile(): Promise<string | null>;
+    defaultOutputDir(): Promise<string>;
+    joinTranscriptPath(base: string, filename: string): Promise<string>;
+  };
+
+  // Keyterm glossary
+  keyterms: {
+    list(): Promise<string[]>; // profile names
+    load(profile: string): Promise<string[]>;
+  };
+
+  // Log + open external
+  log(level: "info" | "warn" | "error", msg: string): void;
+  openExternal(url: string): Promise<void>;
+}
+
+declare global {
+  interface Window {
+    eba: EbaApi;
+  }
+}

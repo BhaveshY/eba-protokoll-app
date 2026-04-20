@@ -1,0 +1,53 @@
+appId: de.eb-a.protokoll
+productName: EBA Protokoll
+copyright: Copyright © 2026 EB&A
+directories:
+  output: release
+  buildResources: resources
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - keyterms.json
+  - package.json
+  - "!**/*.map"
+asar: true
+asarUnpack: []
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: zip
+      arch: [arm64]
+    - target: zip
+      arch: [x64]
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  extendInfo:
+    NSMicrophoneUsageDescription: EBA Protokoll nimmt das Mikrofon auf, um Meetings zu transkribieren.
+    NSCameraUsageDescription: Nicht verwendet.
+    NSHighResolutionCapable: true
+    LSMinimumSystemVersion: "12.0"
+
+dmg:
+  sign: false
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  signAndEditExecutable: false
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  runAfterFinish: true
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Office

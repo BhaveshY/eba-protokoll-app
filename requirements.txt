@@ -1,5 +1,0 @@
-whisperx>=3.8.0
-sounddevice
-numpy
-PyAudioWPatch
-noisereduce

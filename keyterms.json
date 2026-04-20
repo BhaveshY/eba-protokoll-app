@@ -1,0 +1,17 @@
+{
+  "profiles": {
+    "default": [],
+    "bau": [
+      "Baugesuch",
+      "Brandschutz",
+      "Bauzeitplan",
+      "Rohbau",
+      "Elektroplanung",
+      "Statik",
+      "Baubewilligung",
+      "Polier",
+      "Bauherr",
+      "Generalunternehmer"
+    ]
+  }
+}

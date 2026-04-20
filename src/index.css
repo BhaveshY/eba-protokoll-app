@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-bg-app text-fg font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  *:focus-visible {
+    outline: 2px solid theme("colors.brand.DEFAULT");
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(15, 23, 42, 0.15);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(15, 23, 42, 0.28);
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-bg-card border border-line rounded-card shadow-card;
+  }
+
+  .input {
+    @apply w-full bg-bg-inset border border-line rounded-lg px-3 py-2
+           text-sm text-fg placeholder:text-fg-muted
+           focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/20
+           transition;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2
+           text-sm font-semibold rounded-lg px-4 py-2
+           transition select-none cursor-pointer
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply btn bg-brand text-fg-invert hover:bg-brand-hover active:bg-brand-active;
+  }
+  .btn-danger {
+    @apply btn bg-danger text-fg-invert hover:bg-danger-hover;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-fg border border-line hover:bg-bg-inset;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1
+           text-xs font-medium rounded-full bg-bg-inset text-fg-muted;
+  }
+}
+
+/* Drag region for frameless window title bar on macOS */
+.title-bar-drag {
+  -webkit-app-region: drag;
+}
+.title-bar-drag button,
+.title-bar-drag a,
+.title-bar-drag input,
+.title-bar-drag select,
+.title-bar-drag [data-no-drag] {
+  -webkit-app-region: no-drag;
+}

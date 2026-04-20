@@ -10,7 +10,9 @@ Meeting-Protokoll mit Teilnehmerliste, Themen und Aufgabenzuordnung.
 
 ## Transkript-Format
 
-Die EBA Protokoll App erzeugt Transkripte im folgenden Format:
+Das Transkript-Format ist unveraendert gegenueber frueheren App-Versionen --
+das Plugin kann unveraendert weiterverwendet werden. Die EBA Protokoll App
+erzeugt Transkripte im folgenden Format:
 
 ```
 [00:00:05] Ich: Guten Morgen zusammen, fangen wir an.
