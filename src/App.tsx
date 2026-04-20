@@ -1,74 +1,130 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Header } from "./components/Header";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { RecentList } from "./components/RecentList";
 import { RecordingPanel, type LoadedAudio } from "./components/RecordingPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { SpeakerRenameDialog } from "./components/SpeakerRenameDialog";
+import { TranscriptReviewPanel } from "./components/TranscriptReviewPanel";
 import { Toast } from "./components/ui/Toast";
-import { formatTranscript } from "./lib/transcript";
+import { formatTranscript, sampleQuotes } from "./lib/transcript";
 import type { Segment } from "./lib/types";
 import { useAppStore } from "./state/useAppStore";
 import { useTranscription } from "./state/useTranscription";
 
 export function App() {
-  const store = useAppStore();
-  const tx = useTranscription();
+  const {
+    config,
+    apiKey,
+    keytermProfiles,
+    keytermCounts,
+    recent,
+    toast,
+    patchConfig,
+    saveApiKey,
+    refreshKeyterms,
+    refreshRecent,
+    notify,
+    dismissToast,
+  } = useAppStore();
+  const { state: txState, start: startTx, cancel: cancelTx } = useTranscription();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loaded, setLoaded] = useState<LoadedAudio | null>(null);
-  const [renameSegments, setRenameSegments] = useState<Segment[] | null>(null);
-  const [renameTarget, setRenameTarget] = useState<string>("");
+  const [projectName, setProjectName] = useState(() => defaultProjectName());
+  const [reviewState, setReviewState] = useState<{
+    segments: Segment[];
+    target: string;
+  } | null>(null);
+  const onboardedRef = useRef(false);
+  const handledTranscriptRef = useRef<string>("");
 
-  const transcribing = tx.state.stage !== null &&
-    !["done", "error", "cancelled"].includes(tx.state.stage);
+  const transcribing =
+    txState.stage !== null &&
+    !["done", "error", "cancelled"].includes(txState.stage);
 
   // Prompt for API key on first run
-  const onboardedRef = useMemo(() => ({ done: false }), []);
   useEffect(() => {
-    if (!store.config) return;
-    if (!store.apiKey && !onboardedRef.done) {
-      onboardedRef.done = true;
-      store.notify(
+    if (!config) return;
+    if (!apiKey && !onboardedRef.current) {
+      onboardedRef.current = true;
+      notify(
         "info",
         "Willkommen. Deepgram API-Key unter Einstellungen hinterlegen."
       );
     }
-  }, [store, onboardedRef]);
+  }, [apiKey, config, notify]);
 
-  // Show rename dialog when transcription succeeds
   useEffect(() => {
-    if (tx.state.stage === "done" && tx.state.segments.length > 0) {
-      setRenameSegments(tx.state.segments);
-      setRenameTarget(tx.state.transcriptPath);
-      store.refreshRecent();
-      store.notify("success", `Transkript gespeichert.`);
+    const preventWindowDrop = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes("Files")) return;
+      e.preventDefault();
+    };
+    window.addEventListener("dragover", preventWindowDrop);
+    window.addEventListener("drop", preventWindowDrop);
+    return () => {
+      window.removeEventListener("dragover", preventWindowDrop);
+      window.removeEventListener("drop", preventWindowDrop);
+    };
+  }, []);
+
+  // Open transcript review when transcription succeeds
+  useEffect(() => {
+    const reviewableSpeakerCount = Object.keys(sampleQuotes(txState.segments)).length;
+    if (
+      txState.stage === "done" &&
+      txState.segments.length > 0 &&
+      txState.transcriptPath &&
+      txState.transcriptPath !== handledTranscriptRef.current
+    ) {
+      handledTranscriptRef.current = txState.transcriptPath;
+      if (reviewableSpeakerCount > 0) {
+        setReviewState({
+          segments: txState.segments,
+          target: txState.transcriptPath,
+        });
+      }
+      void refreshRecent();
+      notify(
+        "success",
+        reviewableSpeakerCount > 0
+          ? "Transkript gespeichert. Sprecher jetzt pruefen."
+          : "Transkript gespeichert."
+      );
     }
-    if (tx.state.stage === "error" && tx.state.error) {
-      store.notify("error", tx.state.error);
+  }, [
+    txState.stage,
+    txState.segments,
+    txState.transcriptPath,
+    refreshRecent,
+    notify,
+  ]);
+
+  useEffect(() => {
+    if (txState.stage === "error" && txState.error) {
+      notify("error", txState.error);
     }
-  }, [tx.state.stage, tx.state.segments, tx.state.transcriptPath, tx.state.error, store]);
+  }, [txState.stage, txState.error, notify]);
 
   const startTranscription = useCallback(async () => {
-    if (!loaded || !store.config) return;
-    if (!store.apiKey) {
-      store.notify("warn", "API-Key fehlt. Siehe Einstellungen.");
+    if (!loaded || !config) return;
+    if (!apiKey) {
+      notify("warn", "API-Key fehlt. Siehe Einstellungen.");
       setSettingsOpen(true);
       return;
     }
     const keyterms = await window.eba.keyterms.load(
-      store.config.keytermProfile || "default"
+      config.keytermProfile || "default"
     );
-    const project = deriveProjectName(loaded.filename);
-    await tx.start({
-      apiKey: store.apiKey,
-      config: store.config,
+    const project = projectName.trim() || deriveProjectName(loaded.filename);
+    await startTx({
+      apiKey,
+      config,
       audioBlob: loaded.blob,
       filename: loaded.filename,
       isRecordedStereo: loaded.isRecordedStereo,
       keyterms,
       project,
     });
-  }, [loaded, store, tx]);
+  }, [loaded, config, apiKey, notify, projectName, startTx]);
 
   const saveSettings = useCallback(
     async ({
@@ -76,82 +132,107 @@ export function App() {
       patch,
     }: {
       apiKey: string;
-      patch: Parameters<typeof store.patchConfig>[0];
+      patch: Parameters<typeof patchConfig>[0];
     }) => {
       try {
-        await store.saveApiKey(apiKey);
-        await store.patchConfig(patch);
-        await window.eba.fs.ensureOutputDirs(
-          patch.outputDir || store.config?.outputDir || ""
-        );
-        await store.refreshKeyterms();
-        await store.refreshRecent();
-        store.notify("success", "Einstellungen gespeichert.");
+        await saveApiKey(apiKey);
+        const nextConfig = await patchConfig(patch);
+        await window.eba.fs.ensureOutputDirs(nextConfig.outputDir);
+        await refreshKeyterms();
+        await refreshRecent(nextConfig.outputDir);
+        notify("success", "Einstellungen gespeichert.");
         setSettingsOpen(false);
       } catch (err) {
-        store.notify("error", `Speichern fehlgeschlagen: ${(err as Error).message}`);
+        notify("error", `Speichern fehlgeschlagen: ${(err as Error).message}`);
       }
     },
-    [store]
+    [patchConfig, refreshKeyterms, refreshRecent, saveApiKey, notify]
   );
 
-  const confirmRename = useCallback(
+  const saveReview = useCallback(
     async (names: Record<string, string>) => {
-      if (!renameSegments || !renameTarget || !store.config) {
-        setRenameSegments(null);
+      if (!reviewState) {
+        setReviewState(null);
         return;
       }
       try {
-        await store.patchConfig({ speakerNames: names });
-        const text = formatTranscript(renameSegments, names);
-        await window.eba.fs.writeTranscript(renameTarget, text);
-        await store.refreshRecent();
-        store.notify("success", "Sprechernamen aktualisiert.");
+        const text = formatTranscript(reviewState.segments, names);
+        await window.eba.fs.writeTranscript(reviewState.target, text);
+        await refreshRecent();
+        notify("success", "Sprechernamen aktualisiert.");
       } catch (err) {
-        store.notify("error", (err as Error).message);
+        notify("error", (err as Error).message);
       } finally {
-        setRenameSegments(null);
+        setReviewState(null);
       }
     },
-    [renameSegments, renameTarget, store]
+    [reviewState, refreshRecent, notify]
+  );
+
+  const openTranscript = useCallback(
+    async (path: string) => {
+      try {
+        await window.eba.fs.openPath(path);
+      } catch (err) {
+        notify("error", `Datei konnte nicht geoeffnet werden: ${(err as Error).message}`);
+      }
+    },
+    [notify]
+  );
+
+  const revealTranscript = useCallback(
+    async (path: string) => {
+      try {
+        await window.eba.fs.revealInFolder(path);
+      } catch (err) {
+        notify("error", `Ordner konnte nicht angezeigt werden: ${(err as Error).message}`);
+      }
+    },
+    [notify]
   );
 
   // Keyboard shortcuts
   useEffect(() => {
     const onKey = async (e: KeyboardEvent) => {
+      if (reviewState) return;
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "t") {
         e.preventDefault();
         await startTranscription();
       } else if (mod && e.key.toLowerCase() === "o") {
         e.preventDefault();
-        const p = await window.eba.fs.chooseAudioFile();
-        if (p) {
-          const bytes = await window.eba.fs.readFileAsBytes(p);
-          setLoaded({
-            blob: new Blob([bytes]),
-            filename: p.split(/[/\\]/).pop() || "audio",
-            isRecordedStereo: false,
-            durationSec: 0,
-          });
+        try {
+          const p = await window.eba.fs.chooseAudioFile();
+          if (p) {
+            const bytes = await window.eba.fs.readFileAsBytes(p);
+            setLoaded({
+              blob: new Blob([bytes]),
+              filename: p.split(/[/\\]/).pop() || "audio",
+              isRecordedStereo: false,
+              durationSec: 0,
+              source: "imported",
+            });
+          }
+        } catch (err) {
+          notify("error", `Import fehlgeschlagen: ${(err as Error).message}`);
         }
       } else if (mod && e.key === ",") {
         e.preventDefault();
         setSettingsOpen(true);
       } else if (e.key === "Escape") {
-        if (transcribing) tx.cancel();
+        if (transcribing) cancelTx();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [startTranscription, transcribing, tx]);
+  }, [startTranscription, transcribing, cancelTx, notify, reviewState]);
 
   const keytermCount = useMemo(() => {
-    // Rough display in header — actual count is loaded lazily; show profile name here.
-    return 0;
-  }, []);
+    if (!config) return 0;
+    return keytermCounts[config.keytermProfile || "default"] ?? 0;
+  }, [config, keytermCounts]);
 
-  if (!store.config) {
+  if (!config) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <p className="text-sm text-fg-muted">Lade...</p>
@@ -162,9 +243,9 @@ export function App() {
   return (
     <div className="flex min-h-screen flex-col">
       <Header
-        apiKeyPresent={Boolean(store.apiKey)}
-        endpoint={store.config.deepgramEndpoint}
-        glossary={store.config.keytermProfile || "default"}
+        apiKeyPresent={Boolean(apiKey)}
+        endpoint={config.deepgramEndpoint}
+        glossary={config.keytermProfile || "default"}
         glossaryCount={keytermCount}
         onOpenSettings={() => setSettingsOpen(true)}
       />
@@ -173,7 +254,10 @@ export function App() {
         <div className="grid gap-5 lg:grid-cols-5">
           <div className="flex flex-col gap-5 lg:col-span-3">
             <RecordingPanel
-              config={store.config}
+              config={config}
+              projectName={projectName}
+              onProjectNameChange={setProjectName}
+              loaded={loaded}
               disabled={transcribing}
               onLoaded={setLoaded}
               onLog={(lvl, m) => window.eba.log(lvl, m)}
@@ -202,14 +286,14 @@ export function App() {
 
           <div className="flex flex-col gap-5 lg:col-span-2">
             <ProgressPanel
-              tx={tx.state}
+              tx={txState}
               isActive={transcribing}
-              onCancel={tx.cancel}
+              onCancel={cancelTx}
             />
             <RecentList
-              items={store.recent}
-              onOpen={(p) => window.eba.fs.openPath(p)}
-              onReveal={(p) => window.eba.fs.revealInFolder(p)}
+              items={recent}
+              onOpen={openTranscript}
+              onReveal={revealTranscript}
             />
           </div>
         </div>
@@ -227,29 +311,30 @@ export function App() {
 
       {settingsOpen && (
         <SettingsPanel
-          config={store.config}
-          apiKey={store.apiKey}
-          keytermProfiles={store.keytermProfiles}
+          config={config}
+          apiKey={apiKey}
+          keytermProfiles={keytermProfiles}
           onClose={() => setSettingsOpen(false)}
           onSave={saveSettings}
-          notify={store.notify}
+          notify={notify}
         />
       )}
 
-      {renameSegments && (
-        <SpeakerRenameDialog
-          segments={renameSegments}
-          existing={store.config.speakerNames}
-          onCancel={() => setRenameSegments(null)}
-          onConfirm={confirmRename}
+      {reviewState && (
+        <TranscriptReviewPanel
+          segments={reviewState.segments}
+          transcriptPath={reviewState.target}
+          initialNames={{}}
+          onClose={() => setReviewState(null)}
+          onSave={saveReview}
         />
       )}
 
-      {store.toast && (
+      {toast && (
         <Toast
-          kind={store.toast.kind}
-          message={store.toast.message}
-          onDismiss={store.dismissToast}
+          kind={toast.kind}
+          message={toast.message}
+          onDismiss={dismissToast}
         />
       )}
     </div>
@@ -259,4 +344,10 @@ export function App() {
 function deriveProjectName(filename: string): string {
   const base = filename.replace(/\.[^.]+$/, "");
   return base || "Besprechung";
+}
+
+function defaultProjectName(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `Besprechung_${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }

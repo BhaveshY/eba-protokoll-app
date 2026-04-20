@@ -29,17 +29,19 @@ function defaultOutputDir(): string {
 
 async function readConfig(): Promise<AppConfig> {
   const file = configPath();
-  let cfg: AppConfig = { ...DEFAULT_CONFIG, outputDir: defaultOutputDir() };
+  let cfg: AppConfig = sanitizeConfig({
+    ...DEFAULT_CONFIG,
+    outputDir: defaultOutputDir(),
+  });
   try {
     const raw = await fsp.readFile(file, "utf8");
     const parsed = JSON.parse(raw);
-    cfg = { ...cfg, ...parsed };
+    cfg = sanitizeConfig({ ...cfg, ...parsed });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       console.warn("config read failed:", err);
     }
   }
-  if (!cfg.outputDir) cfg.outputDir = defaultOutputDir();
   return cfg;
 }
 
@@ -88,12 +90,16 @@ async function writeApiKey(value: string): Promise<void> {
 // --- filesystem helpers -------------------------------------------------
 
 async function ensureOutputDirs(base: string): Promise<void> {
+  if (!base.trim()) {
+    throw new Error("Ausgabe-Verzeichnis fehlt.");
+  }
   for (const sub of ["aufnahmen", "transkripte", "protokolle"]) {
     await fsp.mkdir(path.join(base, sub), { recursive: true });
   }
 }
 
 async function listTranscripts(base: string, limit = 8): Promise<RecentTranscript[]> {
+  if (!base.trim()) return [];
   const folder = path.join(base, "transkripte");
   let entries: string[] = [];
   try {
@@ -147,6 +153,25 @@ async function loadKeyterms(): Promise<KeytermProfiles> {
   return { profiles: { default: [] } };
 }
 
+function sanitizeConfig(input: Partial<AppConfig>): AppConfig {
+  const outputDir = readTrimmedString(input.outputDir) || defaultOutputDir();
+
+  return {
+    language: readTrimmedString(input.language) || DEFAULT_CONFIG.language,
+    outputDir,
+    keytermProfile:
+      readTrimmedString(input.keytermProfile) || DEFAULT_CONFIG.keytermProfile,
+    deepgramEndpoint:
+      readTrimmedString(input.deepgramEndpoint) || DEFAULT_CONFIG.deepgramEndpoint,
+    systemAudioDevice:
+      readTrimmedString(input.systemAudioDevice) || DEFAULT_CONFIG.systemAudioDevice,
+  };
+}
+
+function readTrimmedString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 // --- IPC ----------------------------------------------------------------
 
 function registerIpc(): void {
@@ -154,7 +179,7 @@ function registerIpc(): void {
 
   ipcMain.handle("config:set", async (_evt, patch: Partial<AppConfig>) => {
     const current = await readConfig();
-    const next = { ...current, ...patch };
+    const next = sanitizeConfig({ ...current, ...patch });
     await writeConfig(next);
     return next;
   });
@@ -188,11 +213,14 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("fs:revealInFolder", async (_evt, p: string) => {
+    if (!p.trim()) throw new Error("Pfad fehlt.");
     shell.showItemInFolder(p);
   });
 
   ipcMain.handle("fs:openPath", async (_evt, p: string) => {
-    await shell.openPath(p);
+    if (!p.trim()) throw new Error("Pfad fehlt.");
+    const error = await shell.openPath(p);
+    if (error) throw new Error(error);
   });
 
   ipcMain.handle("fs:chooseDirectory", async (_evt, initial?: string) => {
@@ -225,7 +253,10 @@ function registerIpc(): void {
   ipcMain.handle(
     "fs:joinTranscriptPath",
     async (_evt, base: string, filename: string) =>
-      path.join(base, "transkripte", filename)
+      {
+        if (!base.trim()) throw new Error("Ausgabe-Verzeichnis fehlt.");
+        return path.join(base, "transkripte", filename);
+      }
   );
 
   ipcMain.handle("keyterms:list", async () => {

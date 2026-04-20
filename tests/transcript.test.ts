@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  cleanSpeakerNames,
+  collectSpeakerReviewItems,
   formatTimestamp,
   formatTranscript,
   humanSize,
@@ -111,6 +113,42 @@ describe("sampleQuotes", () => {
     ]);
     expect(q["Sprecher 1"].endsWith("...")).toBe(true);
     expect(q["Sprecher 1"].length).toBe(123);
+  });
+});
+
+describe("cleanSpeakerNames", () => {
+  it("trims names and drops blanks", () => {
+    expect(
+      cleanSpeakerNames({
+        " Sprecher 1 ": "  Anna  ",
+        "": "Test",
+        "Sprecher 2": "   ",
+      })
+    ).toEqual({ "Sprecher 1": "Anna" });
+  });
+});
+
+describe("collectSpeakerReviewItems", () => {
+  it("collects speaker stats and keeps Ich fixed", () => {
+    const items = collectSpeakerReviewItems([
+      { start: 0, end: 2, speaker: "Ich", text: "Kurzes Intro." },
+      { start: 3, end: 8, speaker: "Sprecher 1", text: "Erster laengerer Beitrag." },
+      { start: 9, end: 10, speaker: "Sprecher 1", text: "Nachtrag." },
+      { start: 11, end: 14, speaker: "Sprecher 2", text: "Antwort aus dem Team." },
+    ], { "Sprecher 2": "Frau Sommer" });
+
+    expect(items.map((item) => item.id)).toEqual([
+      "Ich",
+      "Sprecher 1",
+      "Sprecher 2",
+    ]);
+    expect(items[0].isFixed).toBe(true);
+    expect(items[1].segmentCount).toBe(2);
+    expect(items[1].samples).toEqual([
+      "Erster laengerer Beitrag.",
+      "Nachtrag.",
+    ]);
+    expect(items[2].assignedName).toBe("Frau Sommer");
   });
 });
 

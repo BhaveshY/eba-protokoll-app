@@ -1,5 +1,16 @@
 import type { DeepgramResponse, Segment } from "./types";
 
+export interface SpeakerReviewItem {
+  id: string;
+  assignedName: string;
+  isFixed: boolean;
+  segmentCount: number;
+  wordCount: number;
+  totalDurationSec: number;
+  firstStart: number;
+  samples: string[];
+}
+
 export function formatTimestamp(seconds: number): string {
   const total = Math.floor(seconds);
   const hh = String(Math.floor(total / 3600)).padStart(2, "0");
@@ -84,6 +95,62 @@ export function sampleQuotes(
       text.length > maxLen ? text.slice(0, maxLen) + "..." : text;
   }
   return quotes;
+}
+
+export function cleanSpeakerNames(
+  names: Record<string, string>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(names).flatMap(([id, value]) => {
+      const nextId = id.trim();
+      const nextValue = value.trim();
+      return nextId && nextValue ? [[nextId, nextValue]] : [];
+    })
+  );
+}
+
+export function collectSpeakerReviewItems(
+  segments: Segment[],
+  names: Record<string, string> = {},
+  maxSamples = 3
+): SpeakerReviewItem[] {
+  const cleanedNames = cleanSpeakerNames(names);
+  const items = new Map<string, SpeakerReviewItem>();
+
+  for (const segment of segments) {
+    const speaker = segment.speaker.trim();
+    const text = segment.text.trim();
+    if (!speaker || !text) continue;
+
+    let item = items.get(speaker);
+    if (!item) {
+      item = {
+        id: speaker,
+        assignedName: cleanedNames[speaker] ?? "",
+        isFixed: speaker === "Ich",
+        segmentCount: 0,
+        wordCount: 0,
+        totalDurationSec: 0,
+        firstStart: segment.start,
+        samples: [],
+      };
+      items.set(speaker, item);
+    }
+
+    item.segmentCount += 1;
+    item.wordCount += text.split(/\s+/).filter(Boolean).length;
+    item.totalDurationSec += Math.max(0, segment.end - segment.start);
+    item.firstStart = Math.min(item.firstStart, segment.start);
+
+    if (item.samples.length < maxSamples) {
+      item.samples.push(text.length > 110 ? `${text.slice(0, 110)}...` : text);
+    }
+  }
+
+  return [...items.values()].sort((a, b) => {
+    if (a.isFixed !== b.isFixed) return a.isFixed ? -1 : 1;
+    return a.firstStart - b.firstStart;
+  });
 }
 
 export function safeProject(name: string): string {

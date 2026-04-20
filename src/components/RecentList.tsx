@@ -35,7 +35,7 @@ export function RecentList({
                 </div>
               </button>
               <button
-                className="ml-3 opacity-0 transition group-hover:opacity-100 text-xs text-brand hover:underline"
+                className="ml-3 text-xs text-brand opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 hover:underline"
                 onClick={() => onReveal(item.path)}
               >
                 Im Ordner zeigen

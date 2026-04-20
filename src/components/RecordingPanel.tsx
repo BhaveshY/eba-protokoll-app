@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppConfig } from "@shared/ipc";
+import clsx from "../lib/clsx";
 import { findDeviceByHint, listInputDevices } from "../lib/devices";
 import { MeetingRecorder, type RecordingResult } from "../lib/recorder";
 import { humanSize } from "../lib/transcript";
@@ -13,28 +14,35 @@ export interface LoadedAudio {
   filename: string;
   isRecordedStereo: boolean;
   durationSec: number;
+  source: "recorded" | "imported";
 }
 
 export function RecordingPanel({
   config,
+  projectName,
+  onProjectNameChange,
+  loaded,
   disabled,
   onLoaded,
   onLog,
 }: {
   config: AppConfig;
+  projectName: string;
+  onProjectNameChange: (value: string) => void;
+  loaded: LoadedAudio | null;
   disabled?: boolean;
   onLoaded: (audio: LoadedAudio) => void;
   onLog: (level: "info" | "warn" | "error", msg: string) => void;
 }) {
   const [mode, setMode] = useState<Mode>("idle");
-  const [project, setProject] = useState(defaultProject());
   const [elapsed, setElapsed] = useState(0);
   const [statusText, setStatusText] = useState(
     "Bereit zur Aufnahme."
   );
-  const [summary, setSummary] = useState<string>("Keine Aufnahme geladen.");
+  const [dropActive, setDropActive] = useState(false);
   const recorderRef = useRef<MeetingRecorder | null>(null);
   const timerRef = useRef<number | null>(null);
+  const dragDepthRef = useRef(0);
 
   const clearTimer = () => {
     if (timerRef.current !== null) {
@@ -43,19 +51,51 @@ export function RecordingPanel({
     }
   };
 
-  useEffect(() => () => clearTimer(), []);
+  useEffect(
+    () => () => {
+      clearTimer();
+      recorderRef.current?.abort();
+      recorderRef.current = null;
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!loaded) return;
+    setMode(loaded.source === "imported" ? "imported" : "stopped");
+    setElapsed(loaded.durationSec);
+    setStatusText(
+      loaded.source === "imported"
+        ? "Datei bereit zur Transkription."
+        : "Aufnahme bereit fuer Transkription."
+    );
+  }, [loaded]);
+
+  const loadImportedAudio = useCallback(
+    (blob: Blob, filename: string) => {
+      onLoaded({
+        blob,
+        filename,
+        isRecordedStereo: false,
+        durationSec: 0,
+        source: "imported",
+      });
+      setMode("imported");
+      setStatusText("Datei bereit zur Transkription.");
+    },
+    [onLoaded]
+  );
 
   const startRecording = useCallback(async () => {
     if (disabled) return;
     setStatusText("Mikrofon wird geoeffnet...");
+    let rec: MeetingRecorder | null = null;
     try {
-      const devices = await listInputDevices();
-      const hinted = config.systemAudioDevice
-        ? findDeviceByHint(devices, config.systemAudioDevice)
+      const devices = config.systemAudioDevice ? await listInputDevices() : [];
+      const systemDev = config.systemAudioDevice
+        ? findDeviceByHint(devices, config.systemAudioDevice)?.deviceId
         : undefined;
-      const systemDev = hinted?.deviceId;
-
-      const rec = new MeetingRecorder({ systemDeviceId: systemDev });
+      rec = new MeetingRecorder({ systemDeviceId: systemDev });
       await rec.start();
       recorderRef.current = rec;
       setMode("recording");
@@ -70,6 +110,9 @@ export function RecordingPanel({
           : "Aufnahme laeuft (nur Mikrofon — kein System-Audio-Geraet)."
       );
     } catch (err) {
+      rec?.abort();
+      recorderRef.current?.abort();
+      recorderRef.current = null;
       onLog("error", `record start: ${(err as Error).message}`);
       setStatusText(`Mikrofon-Fehler: ${(err as Error).message}`);
       setMode("idle");
@@ -85,24 +128,23 @@ export function RecordingPanel({
       const result: RecordingResult = await rec.stop();
       recorderRef.current = null;
       setMode("stopped");
-      const filename = `${project || "Besprechung"}.wav`;
+      const filename = `${projectName.trim() || "Besprechung"}.wav`;
       onLoaded({
         blob: result.stereo,
         filename,
         isRecordedStereo: result.usedSystemAudio,
         durationSec: result.durationSec,
+        source: "recorded",
       });
-      setSummary(
-        `Aufnahme: ${fmtDuration(result.durationSec)}  ·  ${humanSize(
-          result.stereo.size
-        )}  ·  ${result.usedSystemAudio ? "Stereo (Mic+System)" : "Mono (nur Mic)"}`
-      );
       setStatusText("Aufnahme bereit fuer Transkription.");
     } catch (err) {
+      rec.abort();
+      recorderRef.current = null;
+      setMode("idle");
       onLog("error", `record stop: ${(err as Error).message}`);
       setStatusText(`Fehler beim Stoppen: ${(err as Error).message}`);
     }
-  }, [onLoaded, onLog, project]);
+  }, [onLoaded, onLog, projectName]);
 
   const importFile = useCallback(async () => {
     if (disabled) return;
@@ -110,27 +152,86 @@ export function RecordingPanel({
     if (!p) return;
     try {
       const bytes = await window.eba.fs.readFileAsBytes(p);
-      const blob = new Blob([bytes]);
       const filename = p.split(/[/\\]/).pop() || "audio";
-      onLoaded({
-        blob,
-        filename,
-        isRecordedStereo: false,
-        durationSec: 0,
-      });
-      setMode("imported");
-      setSummary(`Importiert: ${filename}  ·  ${humanSize(blob.size)}`);
-      setStatusText("Datei bereit zur Transkription.");
+      loadImportedAudio(new Blob([bytes]), filename);
     } catch (err) {
       onLog("error", `import: ${(err as Error).message}`);
       setStatusText(`Import fehlgeschlagen: ${(err as Error).message}`);
     }
-  }, [disabled, onLoaded, onLog]);
+  }, [disabled, loadImportedAudio, onLog]);
+
+  const handleDropImport = useCallback(
+    (file: File) => {
+      if (!supportsImport(file.name)) {
+        setStatusText("Nicht unterstuetzte Datei. Bitte Audio oder Video importieren.");
+        return;
+      }
+      loadImportedAudio(file, file.name);
+      if (file.size === 0) {
+        setStatusText("Die importierte Datei ist leer.");
+      }
+    },
+    [loadImportedAudio]
+  );
+
+  const handleDragEnter = useCallback(
+    (e: React.DragEvent<HTMLElement>) => {
+      if (disabled || mode === "recording" || !hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      dragDepthRef.current += 1;
+      setDropActive(true);
+    },
+    [disabled, mode]
+  );
+
+  const handleDragOver = useCallback(
+    (e: React.DragEvent<HTMLElement>) => {
+      if (disabled || mode === "recording" || !hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      setDropActive(true);
+    },
+    [disabled, mode]
+  );
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLElement>) => {
+    if (!hasFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setDropActive(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLElement>) => {
+      if (disabled || mode === "recording" || !hasFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      dragDepthRef.current = 0;
+      setDropActive(false);
+
+      const [file] = Array.from(e.dataTransfer.files);
+      if (!file) return;
+
+      if (e.dataTransfer.files.length > 1) {
+        setStatusText("Mehrere Dateien erkannt. Die erste Datei wurde geladen.");
+      }
+
+      handleDropImport(file);
+    },
+    [disabled, handleDropImport, mode]
+  );
 
   const isRecording = mode === "recording";
+  const summary = loaded ? describeLoadedAudio(loaded) : "Keine Aufnahme geladen.";
 
   return (
-    <Card>
+    <Card
+      className={clsx(
+        "transition",
+        dropActive && "border-brand bg-brand/5 shadow-cardHover"
+      )}
+    >
       <div className="flex flex-col gap-6">
         <div className="grid gap-2">
           <label className="text-xs font-medium text-fg-muted">
@@ -138,8 +239,8 @@ export function RecordingPanel({
           </label>
           <input
             className="input"
-            value={project}
-            onChange={(e) => setProject(e.target.value)}
+            value={projectName}
+            onChange={(e) => onProjectNameChange(e.target.value)}
             placeholder="Besprechung"
           />
         </div>
@@ -187,16 +288,25 @@ export function RecordingPanel({
           </button>
         </div>
 
+        <div
+          className={clsx(
+            "rounded-lg border border-dashed px-4 py-3 text-center text-xs transition",
+            dropActive
+              ? "border-brand bg-brand/5 text-brand"
+              : "border-line bg-bg-inset text-fg-muted"
+          )}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          Datei hier hineinziehen oder ueber "Datei importieren..." auswaehlen.
+        </div>
+
         <p className="text-center text-xs text-fg-muted">{summary}</p>
       </div>
     </Card>
   );
-}
-
-function defaultProject(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `Besprechung_${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function fmtDuration(sec: number): string {
@@ -206,4 +316,21 @@ function fmtDuration(sec: number): string {
   const ss = s % 60;
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(h)}:${pad(m)}:${pad(ss)}`;
+}
+
+function describeLoadedAudio(audio: LoadedAudio): string {
+  if (audio.source === "imported") {
+    return `Importiert: ${audio.filename}  ·  ${humanSize(audio.blob.size)}`;
+  }
+  return `Aufnahme: ${fmtDuration(audio.durationSec)}  ·  ${humanSize(
+    audio.blob.size
+  )}  ·  ${audio.isRecordedStereo ? "Stereo (Mic+System)" : "Mono (nur Mic)"}`;
+}
+
+function hasFiles(data: DataTransfer | null): boolean {
+  return Boolean(data?.types.includes("Files"));
+}
+
+function supportsImport(filename: string): boolean {
+  return /\.(wav|mp3|m4a|mp4|mkv|ogg|flac|webm)$/i.test(filename);
 }

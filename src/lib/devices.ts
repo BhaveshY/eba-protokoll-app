@@ -34,11 +34,21 @@ export async function listInputDevices(): Promise<AudioInputDevice[]> {
     }));
 }
 
+export function isLikelyLoopbackDevice(
+  device: Pick<AudioInputDevice, "label">
+): boolean {
+  const label = device.label.toLowerCase();
+  return LOOPBACK_HINTS.some((hint) => label.includes(hint));
+}
+
+export function filterLoopbackDevices(
+  devices: AudioInputDevice[]
+): AudioInputDevice[] {
+  return devices.filter((device) => isLikelyLoopbackDevice(device));
+}
+
 export async function listLoopbackDevices(): Promise<AudioInputDevice[]> {
-  const all = await listInputDevices();
-  return all.filter((d) =>
-    LOOPBACK_HINTS.some((hint) => d.label.toLowerCase().includes(hint))
-  );
+  return filterLoopbackDevices(await listInputDevices());
 }
 
 export function findDeviceByHint(

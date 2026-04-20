@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { transcribe, TranscriptionCancelled, TranscriptionError } from "../lib/deepgram";
 import { formatTranscript, responseToSegments, safeProject } from "../lib/transcript";
 import type { Segment, TranscribeStage } from "../lib/types";
@@ -94,7 +94,7 @@ export function useTranscription() {
           args.config.outputDir,
           filename
         );
-        const text = formatTranscript(segments, args.config.speakerNames);
+        const text = formatTranscript(segments, {});
         await window.eba.fs.writeTranscript(outPath, text);
 
         setState({
@@ -146,7 +146,10 @@ export function useTranscription() {
     });
   }, []);
 
-  return { state, start, cancel, reset };
+  return useMemo(
+    () => ({ state, start, cancel, reset }),
+    [state, start, cancel, reset]
+  );
 }
 
 function timestampForFile(): string {

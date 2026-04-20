@@ -6,7 +6,6 @@
 
 export interface AppConfig {
   language: string;
-  speakerNames: Record<string, string>;
   outputDir: string;
   keytermProfile: string;
   deepgramEndpoint: string;
@@ -15,7 +14,6 @@ export interface AppConfig {
 
 export const DEFAULT_CONFIG: AppConfig = {
   language: "multi",
-  speakerNames: {},
   outputDir: "",
   keytermProfile: "default",
   deepgramEndpoint: "https://api.eu.deepgram.com",
