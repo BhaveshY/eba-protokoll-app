@@ -36,6 +36,12 @@ const api: EbaApi = {
   keyterms: {
     list: () => ipcRenderer.invoke("keyterms:list"),
     load: (profile: string) => ipcRenderer.invoke("keyterms:load", profile),
+    save: (profile: string, terms: string[]) =>
+      ipcRenderer.invoke("keyterms:save", profile, terms),
+    createProfile: (name: string) =>
+      ipcRenderer.invoke("keyterms:createProfile", name),
+    deleteProfile: (name: string) =>
+      ipcRenderer.invoke("keyterms:deleteProfile", name),
   },
 
   log: (level, msg) => {

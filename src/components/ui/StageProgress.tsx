@@ -1,18 +1,19 @@
 import clsx from "../../lib/clsx";
+import { useT, type TranslationKey } from "../../lib/i18n";
 import type { TranscribeStage } from "../../lib/types";
 
-const STAGES: Array<{ id: Exclude<TranscribeStage, "done" | "error" | "cancelled">; label: string }> = [
-  { id: "prepare", label: "Audio" },
-  { id: "upload", label: "Upload" },
-  { id: "deepgram", label: "Deepgram" },
-  { id: "save", label: "Speichern" },
+const STAGES: Array<{
+  id: Exclude<TranscribeStage, "done" | "error" | "cancelled">;
+  labelKey: TranslationKey;
+}> = [
+  { id: "prepare", labelKey: "stage.audio" },
+  { id: "upload", labelKey: "stage.upload" },
+  { id: "deepgram", labelKey: "stage.deepgram" },
+  { id: "save", labelKey: "stage.save" },
 ];
 
-export function StageProgress({
-  stage,
-}: {
-  stage: TranscribeStage | null;
-}) {
+export function StageProgress({ stage }: { stage: TranscribeStage | null }) {
+  const t = useT();
   const activeIdx = (() => {
     if (!stage) return -1;
     if (stage === "done") return STAGES.length;
@@ -21,7 +22,7 @@ export function StageProgress({
   })();
 
   return (
-    <ol className="flex items-center gap-3">
+    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
       {STAGES.map((s, i) => {
         const isDone = activeIdx > i || activeIdx === STAGES.length;
         const isActive = activeIdx === i;
@@ -30,25 +31,32 @@ export function StageProgress({
           <li key={s.id} className="flex items-center gap-2">
             <span
               className={clsx(
-                "inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold",
+                "inline-flex h-[18px] w-[18px] items-center justify-center rounded-full text-[10px] font-semibold tabular-nums",
                 isError && "bg-danger text-fg-invert",
-                !isError && isDone && "bg-success text-fg-invert",
-                !isError && isActive && "bg-brand text-fg-invert",
-                !isError && !isDone && !isActive && "bg-bg-inset text-fg-muted"
+                !isError && isDone && "bg-fg text-fg-invert",
+                !isError && isActive && "bg-fg text-fg-invert",
+                !isError &&
+                  !isDone &&
+                  !isActive &&
+                  "border border-line text-fg-subtle"
               )}
             >
               {isDone ? "✓" : i + 1}
             </span>
             <span
               className={clsx(
-                "text-xs",
-                isActive ? "font-semibold text-fg" : "text-fg-muted"
+                "text-[11.5px] tracking-tight",
+                isActive
+                  ? "font-semibold text-fg"
+                  : isDone
+                    ? "text-fg"
+                    : "text-fg-subtle"
               )}
             >
-              {s.label}
+              {t(s.labelKey)}
             </span>
             {i < STAGES.length - 1 && (
-              <span className="h-px w-6 bg-line" aria-hidden />
+              <span className="ml-0.5 h-px w-5 bg-line" aria-hidden />
             )}
           </li>
         );

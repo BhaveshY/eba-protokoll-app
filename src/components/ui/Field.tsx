@@ -11,9 +11,11 @@ export function Field({
 }) {
   return (
     <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium text-fg-muted">{label}</span>
+      <span className="text-[11px] font-medium text-fg-muted">{label}</span>
       {children}
-      {hint && <span className="text-xs text-fg-muted/90">{hint}</span>}
+      {hint && (
+        <span className="text-[11px] leading-snug text-fg-subtle">{hint}</span>
+      )}
     </label>
   );
 }

@@ -4,20 +4,34 @@
  * The preload script exposes `window.eba` with these methods.
  */
 
+export type UiLanguage = "de" | "en";
+
 export interface AppConfig {
   language: string;
+  uiLanguage: UiLanguage;
   outputDir: string;
   keytermProfile: string;
   deepgramEndpoint: string;
   systemAudioDevice: string;
+
+  // Transcription-quality toggles (Deepgram features)
+  smartFormat: boolean;      // numbers/dates/currency as digits
+  filterFillers: boolean;    // drop "um", "ah", "ähm" etc
+  paragraphs: boolean;       // break transcript into paragraphs
+  summarize: boolean;        // generate a short summary sidecar
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
   language: "multi",
+  uiLanguage: "de",
   outputDir: "",
   keytermProfile: "default",
   deepgramEndpoint: "https://api.eu.deepgram.com",
   systemAudioDevice: "",
+  smartFormat: true,
+  filterFillers: false,
+  paragraphs: true,
+  summarize: false,
 };
 
 export interface RecentTranscript {
@@ -60,10 +74,13 @@ export interface EbaApi {
     joinTranscriptPath(base: string, filename: string): Promise<string>;
   };
 
-  // Keyterm glossary
+  // Keyterm glossary (read + write)
   keyterms: {
     list(): Promise<string[]>; // profile names
     load(profile: string): Promise<string[]>;
+    save(profile: string, terms: string[]): Promise<string[]>; // returns normalized terms
+    createProfile(name: string): Promise<string[]>; // returns new profile list
+    deleteProfile(name: string): Promise<string[]>; // returns new profile list
   };
 
   // Log + open external

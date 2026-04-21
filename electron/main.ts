@@ -130,34 +130,92 @@ async function listTranscripts(base: string, limit = 8): Promise<RecentTranscrip
 
 // --- keyterms -----------------------------------------------------------
 
-function keytermsPath(): string {
-  // Packaged: keyterms.json is copied into resources.
-  // Dev/unpackaged: walk up two levels from dist-electron/electron/ to repo root.
+function userKeytermsPath(): string {
+  return path.join(app.getPath("userData"), "keyterms.json");
+}
+
+function bundledKeytermsPath(): string {
   return app.isPackaged
     ? path.join(process.resourcesPath, "keyterms.json")
     : path.join(__dirname, "..", "..", "keyterms.json");
 }
 
+const DEFAULT_KEYTERMS: KeytermProfiles = { profiles: { default: [] } };
+
 async function loadKeyterms(): Promise<KeytermProfiles> {
+  // Preferred source: user-writable copy.
   try {
-    const raw = await fsp.readFile(keytermsPath(), "utf8");
+    const raw = await fsp.readFile(userKeytermsPath(), "utf8");
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && parsed.profiles) {
       return parsed as KeytermProfiles;
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.warn("keyterms read failed:", err);
+      console.warn("keyterms user read failed:", err);
     }
   }
-  return { profiles: { default: [] } };
+  // Fallback: seed from bundled file on first run.
+  try {
+    const raw = await fsp.readFile(bundledKeytermsPath(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && parsed.profiles) {
+      return parsed as KeytermProfiles;
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn("keyterms bundled read failed:", err);
+    }
+  }
+  return DEFAULT_KEYTERMS;
+}
+
+async function saveKeyterms(data: KeytermProfiles): Promise<void> {
+  const file = userKeytermsPath();
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  await fsp.writeFile(file, JSON.stringify(data, null, 2), "utf8");
+}
+
+function sanitizeProfileName(raw: string): string {
+  return raw.trim().replace(/\s+/g, " ").slice(0, 64);
+}
+
+function normalizeTerms(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of input) {
+    if (typeof v !== "string") continue;
+    const term = v.trim();
+    if (!term) continue;
+    const key = term.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(term);
+  }
+  return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+function profileNames(data: KeytermProfiles): string[] {
+  const names = Object.keys(data.profiles).sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" })
+  );
+  return names.length ? names : ["default"];
+}
+
+function readBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function sanitizeConfig(input: Partial<AppConfig>): AppConfig {
   const outputDir = readTrimmedString(input.outputDir) || defaultOutputDir();
+  const uiLang = readTrimmedString(input.uiLanguage);
+  const uiLanguage: AppConfig["uiLanguage"] =
+    uiLang === "en" || uiLang === "de" ? uiLang : DEFAULT_CONFIG.uiLanguage;
 
   return {
     language: readTrimmedString(input.language) || DEFAULT_CONFIG.language,
+    uiLanguage,
     outputDir,
     keytermProfile:
       readTrimmedString(input.keytermProfile) || DEFAULT_CONFIG.keytermProfile,
@@ -165,6 +223,10 @@ function sanitizeConfig(input: Partial<AppConfig>): AppConfig {
       readTrimmedString(input.deepgramEndpoint) || DEFAULT_CONFIG.deepgramEndpoint,
     systemAudioDevice:
       readTrimmedString(input.systemAudioDevice) || DEFAULT_CONFIG.systemAudioDevice,
+    smartFormat: readBoolean(input.smartFormat, DEFAULT_CONFIG.smartFormat),
+    filterFillers: readBoolean(input.filterFillers, DEFAULT_CONFIG.filterFillers),
+    paragraphs: readBoolean(input.paragraphs, DEFAULT_CONFIG.paragraphs),
+    summarize: readBoolean(input.summarize, DEFAULT_CONFIG.summarize),
   };
 }
 
@@ -261,14 +323,60 @@ function registerIpc(): void {
 
   ipcMain.handle("keyterms:list", async () => {
     const data = await loadKeyterms();
-    const names = Object.keys(data.profiles).sort();
-    return names.length ? names : ["default"];
+    return profileNames(data);
   });
 
   ipcMain.handle("keyterms:load", async (_evt, profile: string) => {
     const data = await loadKeyterms();
     const terms = data.profiles[profile] ?? [];
     return terms.map((t) => String(t));
+  });
+
+  ipcMain.handle(
+    "keyterms:save",
+    async (_evt, profile: string, terms: string[]) => {
+      const name = sanitizeProfileName(profile || "");
+      if (!name) throw new Error("Profilname fehlt.");
+      const data = await loadKeyterms();
+      const next: KeytermProfiles = {
+        profiles: { ...data.profiles, [name]: normalizeTerms(terms) },
+      };
+      await saveKeyterms(next);
+      return next.profiles[name];
+    }
+  );
+
+  ipcMain.handle("keyterms:createProfile", async (_evt, rawName: string) => {
+    const name = sanitizeProfileName(rawName || "");
+    if (!name) throw new Error("Profilname fehlt.");
+    const data = await loadKeyterms();
+    if (data.profiles[name]) {
+      throw new Error(`Profil "${name}" existiert bereits.`);
+    }
+    const next: KeytermProfiles = {
+      profiles: { ...data.profiles, [name]: [] },
+    };
+    await saveKeyterms(next);
+    return profileNames(next);
+  });
+
+  ipcMain.handle("keyterms:deleteProfile", async (_evt, rawName: string) => {
+    const name = sanitizeProfileName(rawName || "");
+    if (!name) throw new Error("Profilname fehlt.");
+    if (name === "default") {
+      throw new Error("Standard-Profil kann nicht geloescht werden.");
+    }
+    const data = await loadKeyterms();
+    if (!data.profiles[name]) {
+      throw new Error(`Profil "${name}" nicht gefunden.`);
+    }
+    const rest = { ...data.profiles };
+    delete rest[name];
+    const next: KeytermProfiles = {
+      profiles: Object.keys(rest).length ? rest : { default: [] },
+    };
+    await saveKeyterms(next);
+    return profileNames(next);
   });
 
   ipcMain.handle(

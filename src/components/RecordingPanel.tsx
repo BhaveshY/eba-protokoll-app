@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppConfig } from "@shared/ipc";
 import clsx from "../lib/clsx";
 import { findDeviceByHint, listInputDevices } from "../lib/devices";
+import { useT, type TranslateFn } from "../lib/i18n";
 import { MeetingRecorder, type RecordingResult } from "../lib/recorder";
 import { humanSize } from "../lib/transcript";
 import { Card } from "./ui/Card";
@@ -34,11 +35,10 @@ export function RecordingPanel({
   onLoaded: (audio: LoadedAudio) => void;
   onLog: (level: "info" | "warn" | "error", msg: string) => void;
 }) {
+  const t = useT();
   const [mode, setMode] = useState<Mode>("idle");
   const [elapsed, setElapsed] = useState(0);
-  const [statusText, setStatusText] = useState(
-    "Bereit zur Aufnahme."
-  );
+  const [statusText, setStatusText] = useState<string>(() => t("record.status.ready"));
   const [dropActive, setDropActive] = useState(false);
   const recorderRef = useRef<MeetingRecorder | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -60,16 +60,23 @@ export function RecordingPanel({
     []
   );
 
+  // Re-translate the idle status when language changes.
+  useEffect(() => {
+    if (mode === "idle") setStatusText(t("record.status.ready"));
+    else if (mode === "imported") setStatusText(t("record.status.readyToTranscribeFile"));
+    else if (mode === "stopped") setStatusText(t("record.status.readyToTranscribeRec"));
+  }, [t, mode]);
+
   useEffect(() => {
     if (!loaded) return;
     setMode(loaded.source === "imported" ? "imported" : "stopped");
     setElapsed(loaded.durationSec);
     setStatusText(
       loaded.source === "imported"
-        ? "Datei bereit zur Transkription."
-        : "Aufnahme bereit fuer Transkription."
+        ? t("record.status.readyToTranscribeFile")
+        : t("record.status.readyToTranscribeRec")
     );
-  }, [loaded]);
+  }, [loaded, t]);
 
   const loadImportedAudio = useCallback(
     (blob: Blob, filename: string) => {
@@ -81,14 +88,14 @@ export function RecordingPanel({
         source: "imported",
       });
       setMode("imported");
-      setStatusText("Datei bereit zur Transkription.");
+      setStatusText(t("record.status.readyToTranscribeFile"));
     },
-    [onLoaded]
+    [onLoaded, t]
   );
 
   const startRecording = useCallback(async () => {
     if (disabled) return;
-    setStatusText("Mikrofon wird geoeffnet...");
+    setStatusText(t("record.status.opening"));
     let rec: MeetingRecorder | null = null;
     try {
       const devices = config.systemAudioDevice ? await listInputDevices() : [];
@@ -105,25 +112,23 @@ export function RecordingPanel({
         setElapsed(Math.floor((performance.now() - startedAt) / 1000));
       }, 500);
       setStatusText(
-        systemDev
-          ? "Aufnahme laeuft (Mikrofon + System-Audio)."
-          : "Aufnahme laeuft (nur Mikrofon — kein System-Audio-Geraet)."
+        systemDev ? t("record.status.micPlusSystem") : t("record.status.micOnly")
       );
     } catch (err) {
       rec?.abort();
       recorderRef.current?.abort();
       recorderRef.current = null;
       onLog("error", `record start: ${(err as Error).message}`);
-      setStatusText(`Mikrofon-Fehler: ${(err as Error).message}`);
+      setStatusText(t("record.status.micError", { msg: (err as Error).message }));
       setMode("idle");
     }
-  }, [config.systemAudioDevice, disabled, onLog]);
+  }, [config.systemAudioDevice, disabled, onLog, t]);
 
   const stopRecording = useCallback(async () => {
     const rec = recorderRef.current;
     if (!rec) return;
     clearTimer();
-    setStatusText("Aufnahme wird abgeschlossen...");
+    setStatusText(t("record.status.finishing"));
     try {
       const result: RecordingResult = await rec.stop();
       recorderRef.current = null;
@@ -136,15 +141,15 @@ export function RecordingPanel({
         durationSec: result.durationSec,
         source: "recorded",
       });
-      setStatusText("Aufnahme bereit fuer Transkription.");
+      setStatusText(t("record.status.readyToTranscribeRec"));
     } catch (err) {
       rec.abort();
       recorderRef.current = null;
       setMode("idle");
       onLog("error", `record stop: ${(err as Error).message}`);
-      setStatusText(`Fehler beim Stoppen: ${(err as Error).message}`);
+      setStatusText(t("record.status.stopError", { msg: (err as Error).message }));
     }
-  }, [onLoaded, onLog, projectName]);
+  }, [onLoaded, onLog, projectName, t]);
 
   const importFile = useCallback(async () => {
     if (disabled) return;
@@ -156,22 +161,22 @@ export function RecordingPanel({
       loadImportedAudio(new Blob([bytes]), filename);
     } catch (err) {
       onLog("error", `import: ${(err as Error).message}`);
-      setStatusText(`Import fehlgeschlagen: ${(err as Error).message}`);
+      setStatusText(t("record.status.importError", { msg: (err as Error).message }));
     }
-  }, [disabled, loadImportedAudio, onLog]);
+  }, [disabled, loadImportedAudio, onLog, t]);
 
   const handleDropImport = useCallback(
     (file: File) => {
       if (!supportsImport(file.name)) {
-        setStatusText("Nicht unterstuetzte Datei. Bitte Audio oder Video importieren.");
+        setStatusText(t("record.status.unsupported"));
         return;
       }
       loadImportedAudio(file, file.name);
       if (file.size === 0) {
-        setStatusText("Die importierte Datei ist leer.");
+        setStatusText(t("record.status.empty"));
       }
     },
-    [loadImportedAudio]
+    [loadImportedAudio, t]
   );
 
   const handleDragEnter = useCallback(
@@ -214,96 +219,110 @@ export function RecordingPanel({
       if (!file) return;
 
       if (e.dataTransfer.files.length > 1) {
-        setStatusText("Mehrere Dateien erkannt. Die erste Datei wurde geladen.");
+        setStatusText(t("record.status.multipleDropped"));
       }
 
       handleDropImport(file);
     },
-    [disabled, handleDropImport, mode]
+    [disabled, handleDropImport, mode, t]
   );
 
   const isRecording = mode === "recording";
-  const summary = loaded ? describeLoadedAudio(loaded) : "Keine Aufnahme geladen.";
+  const summary = loaded ? describeLoadedAudio(loaded, t) : null;
 
   return (
     <Card
       className={clsx(
-        "transition",
-        dropActive && "border-brand bg-brand/5 shadow-cardHover"
+        "transition-colors duration-150",
+        dropActive && "border-fg/40 bg-fg/[0.02]"
       )}
     >
       <div className="flex flex-col gap-6">
-        <div className="grid gap-2">
-          <label className="text-xs font-medium text-fg-muted">
-            Projektname
+        {/* Project input */}
+        <div className="grid gap-1.5">
+          <label
+            htmlFor="projectName"
+            className="text-[11px] font-medium text-fg-muted"
+          >
+            {t("record.projectName")}
           </label>
           <input
+            id="projectName"
             className="input"
             value={projectName}
             onChange={(e) => onProjectNameChange(e.target.value)}
-            placeholder="Besprechung"
+            placeholder={t("record.projectName.placeholder")}
           />
         </div>
 
-        <div className="flex flex-col items-center gap-3 py-2">
-          <div className="flex items-center gap-2">
+        <div className="divider" />
+
+        {/* Timer + status */}
+        <div className="flex flex-col items-center gap-3 py-1">
+          <div className="flex items-center gap-2 text-[11.5px]">
             <RecordingDot active={isRecording} />
             <span
-              className={
-                isRecording
-                  ? "text-sm font-semibold text-danger"
-                  : "text-sm font-semibold text-fg-muted"
-              }
+              className={clsx(
+                "font-medium tracking-tight",
+                isRecording ? "text-danger" : "text-fg-muted"
+              )}
             >
-              {isRecording ? "Aufnahme laeuft" : statusText}
+              {isRecording ? t("record.status.recordingLabel") : statusText}
             </span>
           </div>
           <div
-            className={
-              "font-mono text-5xl tabular-nums tracking-tight " +
-              (isRecording ? "text-danger" : "text-fg")
-            }
+            className={clsx(
+              "font-mono text-[44px] leading-none tabular-nums tracking-tight transition-colors duration-150",
+              isRecording ? "text-fg" : "text-fg-subtle"
+            )}
             aria-live="polite"
           >
             {fmtDuration(elapsed)}
           </div>
         </div>
 
+        {/* Actions */}
         <div className="flex flex-col gap-2">
           <button
             type="button"
-            className={isRecording ? "btn-danger" : "btn-primary"}
+            className={clsx(isRecording ? "btn-danger" : "btn-primary", "py-2.5")}
             disabled={disabled}
             onClick={isRecording ? stopRecording : startRecording}
           >
-            {isRecording ? "STOPPEN" : "AUFNAHME STARTEN"}
+            {isRecording ? t("record.action.stop") : t("record.action.start")}
           </button>
           <button
             type="button"
             className="btn-ghost"
             onClick={importFile}
             disabled={disabled || isRecording}
+            title={t("record.import.title")}
           >
-            Datei importieren...
+            {t("record.action.import")}
           </button>
         </div>
 
+        {/* Dropzone */}
         <div
           className={clsx(
-            "rounded-lg border border-dashed px-4 py-3 text-center text-xs transition",
+            "rounded-lg border border-dashed px-4 py-3 text-center text-[11.5px] transition-colors duration-150",
             dropActive
-              ? "border-brand bg-brand/5 text-brand"
-              : "border-line bg-bg-inset text-fg-muted"
+              ? "border-fg/50 bg-bg-subtle text-fg"
+              : "border-line bg-bg-subtle text-fg-muted"
           )}
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          Datei hier hineinziehen oder ueber "Datei importieren..." auswaehlen.
+          {dropActive ? t("record.drop.active") : t("record.drop.idle")}
         </div>
 
-        <p className="text-center text-xs text-fg-muted">{summary}</p>
+        {summary && (
+          <p className="-mt-2 text-center text-[11px] leading-relaxed text-fg-subtle">
+            {summary}
+          </p>
+        )}
       </div>
     </Card>
   );
@@ -318,13 +337,20 @@ function fmtDuration(sec: number): string {
   return `${pad(h)}:${pad(m)}:${pad(ss)}`;
 }
 
-function describeLoadedAudio(audio: LoadedAudio): string {
+function describeLoadedAudio(audio: LoadedAudio, t: TranslateFn): string {
   if (audio.source === "imported") {
-    return `Importiert: ${audio.filename}  ·  ${humanSize(audio.blob.size)}`;
+    return t("record.summary.imported", {
+      filename: audio.filename,
+      size: humanSize(audio.blob.size),
+    });
   }
-  return `Aufnahme: ${fmtDuration(audio.durationSec)}  ·  ${humanSize(
-    audio.blob.size
-  )}  ·  ${audio.isRecordedStereo ? "Stereo (Mic+System)" : "Mono (nur Mic)"}`;
+  return t("record.summary.recorded", {
+    duration: fmtDuration(audio.durationSec),
+    size: humanSize(audio.blob.size),
+    mode: audio.isRecordedStereo
+      ? t("record.summary.modeStereo")
+      : t("record.summary.modeMono"),
+  });
 }
 
 function hasFiles(data: DataTransfer | null): boolean {

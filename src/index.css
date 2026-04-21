@@ -13,13 +13,26 @@
 
   body {
     @apply bg-bg-app text-fg font-sans antialiased;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  kbd {
+    @apply inline-flex items-center rounded border border-line bg-bg-card px-1.5 py-px
+           text-[10.5px] font-medium text-fg-muted;
+    font-family: inherit;
+    line-height: 1.4;
+  }
+
+  *:focus {
+    outline: none;
   }
 
   *:focus-visible {
-    outline: 2px solid theme("colors.brand.DEFAULT");
-    outline-offset: 2px;
-    border-radius: 6px;
+    @apply ring-2 ring-fg/15 ring-offset-0 rounded;
+    outline: none;
   }
 
   ::-webkit-scrollbar {
@@ -30,11 +43,15 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(15, 23, 42, 0.15);
+    background: rgba(17, 17, 17, 0.12);
     border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(15, 23, 42, 0.28);
+    background: rgba(17, 17, 17, 0.22);
+    background-clip: padding-box;
+    border: 2px solid transparent;
   }
 }
 
@@ -44,31 +61,47 @@
   }
 
   .input {
-    @apply w-full bg-bg-inset border border-line rounded-lg px-3 py-2
-           text-sm text-fg placeholder:text-fg-muted
-           focus:outline-none focus:border-brand focus:ring-2 focus:ring-brand/20
-           transition;
+    @apply w-full bg-bg-card border border-line rounded-lg px-3 py-2
+           text-sm text-fg placeholder:text-fg-subtle
+           focus:outline-none focus:border-fg/40 focus:ring-2 focus:ring-fg/10
+           transition-[border-color,box-shadow] duration-150;
   }
 
   .btn {
     @apply inline-flex items-center justify-center gap-2
-           text-sm font-semibold rounded-lg px-4 py-2
-           transition select-none cursor-pointer
-           disabled:opacity-50 disabled:cursor-not-allowed;
+           text-[13px] font-medium rounded-lg px-3.5 py-2
+           transition-colors duration-150 select-none cursor-pointer whitespace-nowrap
+           disabled:opacity-40 disabled:cursor-not-allowed;
+    letter-spacing: -0.005em;
   }
   .btn-primary {
-    @apply btn bg-brand text-fg-invert hover:bg-brand-hover active:bg-brand-active;
+    @apply btn bg-brand text-fg-invert hover:bg-brand-hover active:bg-brand-active
+           disabled:bg-brand disabled:hover:bg-brand;
   }
   .btn-danger {
-    @apply btn bg-danger text-fg-invert hover:bg-danger-hover;
+    @apply btn bg-danger text-fg-invert hover:bg-danger-hover
+           disabled:bg-danger disabled:hover:bg-danger;
   }
   .btn-ghost {
-    @apply btn bg-transparent text-fg border border-line hover:bg-bg-inset;
+    @apply btn bg-transparent text-fg border border-line
+           hover:bg-bg-inset hover:border-line-strong;
+  }
+  .btn-quiet {
+    @apply btn bg-transparent text-fg-muted hover:text-fg hover:bg-bg-inset;
   }
 
   .chip {
-    @apply inline-flex items-center gap-1.5 px-2.5 py-1
-           text-xs font-medium rounded-full bg-bg-inset text-fg-muted;
+    @apply inline-flex items-center gap-1.5 px-2 py-0.5
+           text-[11px] font-medium rounded-full
+           bg-bg-inset text-fg-muted;
+  }
+
+  .section-label {
+    @apply text-[10.5px] font-semibold uppercase tracking-[0.08em] text-fg-subtle;
+  }
+
+  .divider {
+    @apply h-px w-full bg-line;
   }
 }
 

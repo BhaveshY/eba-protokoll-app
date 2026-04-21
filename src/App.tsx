@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { UiLanguage } from "@shared/ipc";
+import { GlossaryPanel } from "./components/GlossaryPanel";
 import { Header } from "./components/Header";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { RecentList } from "./components/RecentList";
@@ -6,17 +8,27 @@ import { RecordingPanel, type LoadedAudio } from "./components/RecordingPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { TranscriptReviewPanel } from "./components/TranscriptReviewPanel";
 import { Toast } from "./components/ui/Toast";
+import { I18nProvider, useT } from "./lib/i18n";
 import { formatTranscript, sampleQuotes } from "./lib/transcript";
 import type { Segment } from "./lib/types";
 import { useAppStore } from "./state/useAppStore";
 import { useTranscription } from "./state/useTranscription";
 
 export function App() {
+  const store = useAppStore();
+  const lang: UiLanguage = store.config?.uiLanguage ?? "de";
+  return (
+    <I18nProvider lang={lang}>
+      <AppInner store={store} />
+    </I18nProvider>
+  );
+}
+
+function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
   const {
     config,
     apiKey,
     keytermProfiles,
-    keytermCounts,
     recent,
     toast,
     patchConfig,
@@ -25,9 +37,11 @@ export function App() {
     refreshRecent,
     notify,
     dismissToast,
-  } = useAppStore();
+  } = store;
+  const t = useT();
   const { state: txState, start: startTx, cancel: cancelTx } = useTranscription();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [loaded, setLoaded] = useState<LoadedAudio | null>(null);
   const [projectName, setProjectName] = useState(() => defaultProjectName());
   const [reviewState, setReviewState] = useState<{
@@ -46,12 +60,9 @@ export function App() {
     if (!config) return;
     if (!apiKey && !onboardedRef.current) {
       onboardedRef.current = true;
-      notify(
-        "info",
-        "Willkommen. Deepgram API-Key unter Einstellungen hinterlegen."
-      );
+      notify("info", t("notify.welcome"));
     }
-  }, [apiKey, config, notify]);
+  }, [apiKey, config, notify, t]);
 
   useEffect(() => {
     const preventWindowDrop = (e: DragEvent) => {
@@ -86,8 +97,8 @@ export function App() {
       notify(
         "success",
         reviewableSpeakerCount > 0
-          ? "Transkript gespeichert. Sprecher jetzt pruefen."
-          : "Transkript gespeichert."
+          ? t("notify.transcriptSavedReview")
+          : t("notify.transcriptSaved")
       );
     }
   }, [
@@ -96,6 +107,7 @@ export function App() {
     txState.transcriptPath,
     refreshRecent,
     notify,
+    t,
   ]);
 
   useEffect(() => {
@@ -107,7 +119,7 @@ export function App() {
   const startTranscription = useCallback(async () => {
     if (!loaded || !config) return;
     if (!apiKey) {
-      notify("warn", "API-Key fehlt. Siehe Einstellungen.");
+      notify("warn", t("notify.apiKeyMissing"));
       setSettingsOpen(true);
       return;
     }
@@ -124,7 +136,7 @@ export function App() {
       keyterms,
       project,
     });
-  }, [loaded, config, apiKey, notify, projectName, startTx]);
+  }, [loaded, config, apiKey, notify, projectName, startTx, t]);
 
   const saveSettings = useCallback(
     async ({
@@ -140,13 +152,13 @@ export function App() {
         await window.eba.fs.ensureOutputDirs(nextConfig.outputDir);
         await refreshKeyterms();
         await refreshRecent(nextConfig.outputDir);
-        notify("success", "Einstellungen gespeichert.");
+        notify("success", t("notify.settingsSaved"));
         setSettingsOpen(false);
       } catch (err) {
-        notify("error", `Speichern fehlgeschlagen: ${(err as Error).message}`);
+        notify("error", t("notify.saveFailed", { msg: (err as Error).message }));
       }
     },
-    [patchConfig, refreshKeyterms, refreshRecent, saveApiKey, notify]
+    [patchConfig, refreshKeyterms, refreshRecent, saveApiKey, notify, t]
   );
 
   const saveReview = useCallback(
@@ -159,14 +171,14 @@ export function App() {
         const text = formatTranscript(reviewState.segments, names);
         await window.eba.fs.writeTranscript(reviewState.target, text);
         await refreshRecent();
-        notify("success", "Sprechernamen aktualisiert.");
+        notify("success", t("notify.namesUpdated"));
       } catch (err) {
         notify("error", (err as Error).message);
       } finally {
         setReviewState(null);
       }
     },
-    [reviewState, refreshRecent, notify]
+    [reviewState, refreshRecent, notify, t]
   );
 
   const openTranscript = useCallback(
@@ -174,10 +186,13 @@ export function App() {
       try {
         await window.eba.fs.openPath(path);
       } catch (err) {
-        notify("error", `Datei konnte nicht geoeffnet werden: ${(err as Error).message}`);
+        notify(
+          "error",
+          t("notify.openFileFailed", { msg: (err as Error).message })
+        );
       }
     },
-    [notify]
+    [notify, t]
   );
 
   const revealTranscript = useCallback(
@@ -185,10 +200,25 @@ export function App() {
       try {
         await window.eba.fs.revealInFolder(path);
       } catch (err) {
-        notify("error", `Ordner konnte nicht angezeigt werden: ${(err as Error).message}`);
+        notify(
+          "error",
+          t("notify.revealFailed", { msg: (err as Error).message })
+        );
       }
     },
-    [notify]
+    [notify, t]
+  );
+
+  const changeUiLanguage = useCallback(
+    async (next: UiLanguage) => {
+      if (!config || config.uiLanguage === next) return;
+      try {
+        await patchConfig({ uiLanguage: next });
+      } catch (err) {
+        notify("error", t("notify.saveFailed", { msg: (err as Error).message }));
+      }
+    },
+    [config, patchConfig, notify, t]
   );
 
   // Keyboard shortcuts
@@ -214,7 +244,10 @@ export function App() {
             });
           }
         } catch (err) {
-          notify("error", `Import fehlgeschlagen: ${(err as Error).message}`);
+          notify(
+            "error",
+            t("notify.importFailed", { msg: (err as Error).message })
+          );
         }
       } else if (mod && e.key === ",") {
         e.preventDefault();
@@ -225,17 +258,12 @@ export function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [startTranscription, transcribing, cancelTx, notify, reviewState]);
-
-  const keytermCount = useMemo(() => {
-    if (!config) return 0;
-    return keytermCounts[config.keytermProfile || "default"] ?? 0;
-  }, [config, keytermCounts]);
+  }, [startTranscription, transcribing, cancelTx, notify, reviewState, t]);
 
   if (!config) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-fg-muted">Lade...</p>
+        <p className="text-sm text-fg-muted">{t("app.loading")}</p>
       </div>
     );
   }
@@ -243,16 +271,14 @@ export function App() {
   return (
     <div className="flex min-h-screen flex-col">
       <Header
-        apiKeyPresent={Boolean(apiKey)}
-        endpoint={config.deepgramEndpoint}
-        glossary={config.keytermProfile || "default"}
-        glossaryCount={keytermCount}
+        uiLanguage={config.uiLanguage}
+        onChangeUiLanguage={changeUiLanguage}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-7 py-6">
-        <div className="grid gap-5 lg:grid-cols-5">
-          <div className="flex flex-col gap-5 lg:col-span-3">
+      <main className="mx-auto w-full max-w-5xl flex-1 px-5 py-6 sm:px-7 sm:py-8">
+        <div className="grid gap-5 md:grid-cols-5 md:gap-6">
+          <div className="flex flex-col gap-4 md:col-span-3">
             <RecordingPanel
               config={config}
               projectName={projectName}
@@ -263,28 +289,31 @@ export function App() {
               onLog={(lvl, m) => window.eba.log(lvl, m)}
             />
 
-            <div className="grid gap-2">
+            <div className="flex flex-col gap-1.5">
               <button
                 type="button"
-                className="btn-primary"
+                className="btn-primary py-2.5"
                 disabled={!loaded || transcribing}
                 onClick={startTranscription}
-                title="Cmd/Ctrl + T"
+                title={t("app.action.transcribe.title")}
               >
-                {transcribing ? "Laeuft..." : "Transkribieren"}
+                {transcribing
+                  ? t("app.action.transcribing")
+                  : t("app.action.transcribe")}
               </button>
-              {loaded && (
-                <p className="text-xs text-fg-muted">
-                  Bereit: {loaded.filename}
-                  {loaded.isRecordedStereo
-                    ? " (aufgenommene Stereo-Datei)"
-                    : ""}
+              {loaded && !transcribing && (
+                <p className="px-1 text-[11.5px] text-fg-subtle">
+                  <span className="font-medium text-fg-muted">
+                    {t("app.loaded.label")}
+                  </span>{" "}
+                  <span className="font-mono">{loaded.filename}</span>
+                  {loaded.isRecordedStereo ? t("app.loaded.stereoSuffix") : ""}
                 </p>
               )}
             </div>
           </div>
 
-          <div className="flex flex-col gap-5 lg:col-span-2">
+          <div className="flex flex-col gap-4 md:col-span-2">
             <ProgressPanel
               tx={txState}
               isActive={transcribing}
@@ -300,12 +329,22 @@ export function App() {
       </main>
 
       <footer className="border-t border-line bg-bg-footer">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-7 py-2 text-xs text-fg-muted">
-          <span>
-            Shortcuts: <kbd>⌘T</kbd> Transkribieren · <kbd>⌘O</kbd> Import ·
-            <kbd>⌘,</kbd> Einstellungen · <kbd>Esc</kbd> Abbrechen
+        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-5 py-2 text-[11px] text-fg-muted sm:px-7">
+          <span className="hidden flex-wrap items-center gap-x-3 gap-y-1 md:flex">
+            <span className="flex items-center gap-1.5">
+              <kbd>⌘T</kbd> {t("app.footer.transcribe")}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <kbd>⌘O</kbd> {t("app.footer.import")}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <kbd>⌘,</kbd> {t("app.footer.settings")}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <kbd>Esc</kbd> {t("app.footer.cancel")}
+            </span>
           </span>
-          <span>Version 0.1.0</span>
+          <span className="text-fg-subtle ml-auto">v0.1.0</span>
         </div>
       </footer>
 
@@ -316,6 +355,21 @@ export function App() {
           keytermProfiles={keytermProfiles}
           onClose={() => setSettingsOpen(false)}
           onSave={saveSettings}
+          onChangeUiLanguage={changeUiLanguage}
+          onOpenGlossary={() => setGlossaryOpen(true)}
+          notify={notify}
+        />
+      )}
+
+      {glossaryOpen && (
+        <GlossaryPanel
+          profiles={keytermProfiles}
+          activeProfile={config.keytermProfile || "default"}
+          onActiveProfileChange={(name) => {
+            void patchConfig({ keytermProfile: name });
+          }}
+          onClose={() => setGlossaryOpen(false)}
+          onRefresh={refreshKeyterms}
           notify={notify}
         />
       )}

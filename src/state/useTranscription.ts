@@ -67,6 +67,10 @@ export function useTranscription() {
             language: args.config.language,
             multichannel: args.isRecordedStereo,
             keyterms: args.keyterms,
+            smartFormat: args.config.smartFormat,
+            filterFillers: args.config.filterFillers,
+            paragraphs: args.config.paragraphs,
+            summarize: args.config.summarize,
           },
           signal: controller.signal,
           onStage: (label) =>
@@ -89,13 +93,26 @@ export function useTranscription() {
 
         setState((s) => ({ ...s, stage: "save", status: "Transkript speichern" }));
 
-        const filename = `${safeProject(args.project)}_${timestampForFile()}.txt`;
+        const stem = `${safeProject(args.project)}_${timestampForFile()}`;
         const outPath = await window.eba.fs.joinTranscriptPath(
           args.config.outputDir,
-          filename
+          `${stem}.txt`
         );
         const text = formatTranscript(segments, {});
         await window.eba.fs.writeTranscript(outPath, text);
+
+        // Sidecar summary if Deepgram returned one.
+        const summary =
+          response.results?.summary?.short ||
+          response.results?.summary?.result ||
+          "";
+        if (args.config.summarize && summary.trim()) {
+          const summaryPath = await window.eba.fs.joinTranscriptPath(
+            args.config.outputDir,
+            `${stem}.summary.txt`
+          );
+          await window.eba.fs.writeTranscript(summaryPath, summary.trim() + "\n");
+        }
 
         setState({
           stage: "done",

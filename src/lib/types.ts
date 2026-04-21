@@ -16,6 +16,10 @@ export interface DeepgramUtterance {
 export interface DeepgramResponse {
   results?: {
     utterances?: DeepgramUtterance[];
+    summary?: {
+      short?: string;
+      result?: string;
+    };
   };
 }
 
@@ -36,6 +40,12 @@ export interface TranscribeOptions {
   utterances?: boolean;
   smartFormat?: boolean;
   punctuate?: boolean;
+  /** Drop filler words ("um", "uh", "ähm") from the transcript. */
+  filterFillers?: boolean;
+  /** Produce paragraph breaks within a speaker turn. */
+  paragraphs?: boolean;
+  /** Generate a short summary as part of the response. */
+  summarize?: boolean;
 }
 
 export type TranscribeStage =

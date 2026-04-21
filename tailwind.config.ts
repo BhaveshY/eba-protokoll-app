@@ -6,28 +6,40 @@ const config: Config = {
     extend: {
       colors: {
         bg: {
-          app: "#f5f6f8",
+          app: "#fafaf7",
           card: "#ffffff",
-          inset: "#f1f3f5",
-          footer: "#eef1f4",
+          inset: "#f3f3ef",
+          subtle: "#f7f7f4",
+          footer: "#f3f3ef",
         },
         fg: {
-          DEFAULT: "#0f172a",
-          muted: "#64748b",
+          DEFAULT: "#111111",
+          muted: "#6b6b6b",
+          subtle: "#9a9996",
           invert: "#ffffff",
         },
         brand: {
-          DEFAULT: "#2563eb",
-          hover: "#1d4ed8",
-          active: "#1e40af",
+          DEFAULT: "#111111",
+          hover: "#000000",
+          active: "#1f1f1f",
         },
         danger: {
-          DEFAULT: "#dc2626",
-          hover: "#b91c1c",
+          DEFAULT: "#b42318",
+          hover: "#912012",
+          soft: "#fdecea",
         },
-        success: "#16a34a",
-        warn: "#d97706",
-        line: "#dde2e8",
+        success: {
+          DEFAULT: "#0f7a3d",
+          soft: "#e7f4ec",
+        },
+        warn: {
+          DEFAULT: "#b45309",
+          soft: "#fbf0df",
+        },
+        line: {
+          DEFAULT: "#e6e4df",
+          strong: "#d6d4cd",
+        },
       },
       fontFamily: {
         sans: [
@@ -51,21 +63,27 @@ const config: Config = {
         ],
       },
       borderRadius: {
-        card: "14px",
+        card: "12px",
       },
       boxShadow: {
-        card: "0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.03)",
+        card: "0 1px 0 rgba(17, 17, 17, 0.02), 0 1px 2px rgba(17, 17, 17, 0.04)",
         cardHover:
-          "0 4px 16px rgba(15, 23, 42, 0.06), 0 2px 4px rgba(15, 23, 42, 0.04)",
+          "0 2px 6px rgba(17, 17, 17, 0.05), 0 8px 24px rgba(17, 17, 17, 0.06)",
+        focus: "0 0 0 3px rgba(17, 17, 17, 0.12)",
       },
       keyframes: {
         pulseRing: {
-          "0%":   { transform: "scale(0.85)", opacity: "0.9" },
-          "100%": { transform: "scale(1.6)",  opacity: "0"   },
+          "0%":   { transform: "scale(0.85)", opacity: "0.7" },
+          "100%": { transform: "scale(1.9)",  opacity: "0"   },
+        },
+        fadeInUp: {
+          "0%":   { opacity: "0", transform: "translateY(6px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
         },
       },
       animation: {
-        pulseRing: "pulseRing 1.4s ease-out infinite",
+        pulseRing: "pulseRing 1.6s ease-out infinite",
+        fadeInUp: "fadeInUp 160ms ease-out both",
       },
     },
   },

@@ -44,6 +44,9 @@ export function buildQuery(opts: TranscribeOptions): URLSearchParams {
   q.set("utterances", String(opts.utterances ?? true));
   q.set("smart_format", String(opts.smartFormat ?? true));
   q.set("punctuate", String(opts.punctuate ?? true));
+  if (opts.paragraphs ?? true) q.set("paragraphs", "true");
+  if (opts.filterFillers) q.set("filler_words", "false");
+  if (opts.summarize) q.set("summarize", "v2");
   for (const term of opts.keyterms ?? []) {
     const t = term.trim();
     if (t) q.append("keyterm", t);
