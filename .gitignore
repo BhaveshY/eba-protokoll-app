@@ -13,3 +13,7 @@ logs/
 *.tmp
 .vscode/
 .idea/
+
+# Claude Code / plugin session state
+.claude/
+.remember/
