@@ -1,4 +1,10 @@
-import type { DeepgramResponse, Segment } from "./types";
+import type { DeepgramResponse, DeepgramUtterance, Segment } from "./types";
+
+const SPEAKER_ME = "Ich";
+const DEFAULT_SPEAKER_PREFIX = "Sprecher";
+const DEFAULT_SPEAKER_FALLBACK = `${DEFAULT_SPEAKER_PREFIX} 1`;
+const SAMPLE_QUOTES_DEFAULT_MAX_LEN = 120;
+const REVIEW_SAMPLE_MAX_LEN = 110;
 
 export interface SpeakerReviewItem {
   id: string;
@@ -37,15 +43,15 @@ export function formatTranscript(
 }
 
 function utteranceSpeakerLabel(
-  utt: DeepgramResponse extends infer _ ? NonNullable<DeepgramResponse["results"]>["utterances"] extends infer U ? U extends (infer I)[] ? I : never : never : never,
+  utt: DeepgramUtterance,
   isRecordedStereo: boolean
 ): string {
-  if (isRecordedStereo && utt?.channel === 0) return "Ich";
+  if (isRecordedStereo && utt?.channel === 0) return SPEAKER_ME;
   const speaker = utt?.speaker;
-  if (speaker === undefined || speaker === null) return "Sprecher 1";
+  if (speaker === undefined || speaker === null) return DEFAULT_SPEAKER_FALLBACK;
   const n = Number(speaker);
-  if (!Number.isFinite(n)) return "Sprecher 1";
-  return `Sprecher ${Math.floor(n) + 1}`;
+  if (!Number.isFinite(n)) return DEFAULT_SPEAKER_FALLBACK;
+  return `${DEFAULT_SPEAKER_PREFIX} ${Math.floor(n) + 1}`;
 }
 
 /**
@@ -83,11 +89,11 @@ export function responseToSegments(
  */
 export function sampleQuotes(
   segments: Segment[],
-  maxLen = 120
+  maxLen = SAMPLE_QUOTES_DEFAULT_MAX_LEN
 ): Record<string, string> {
   const quotes: Record<string, string> = {};
   for (const s of segments) {
-    if (!s.speaker || s.speaker === "Ich") continue;
+    if (!s.speaker || s.speaker === SPEAKER_ME) continue;
     const text = s.text.trim();
     if (!text) continue;
     if (quotes[s.speaker]) continue;
@@ -127,7 +133,7 @@ export function collectSpeakerReviewItems(
       item = {
         id: speaker,
         assignedName: cleanedNames[speaker] ?? "",
-        isFixed: speaker === "Ich",
+        isFixed: speaker === SPEAKER_ME,
         segmentCount: 0,
         wordCount: 0,
         totalDurationSec: 0,
@@ -143,7 +149,11 @@ export function collectSpeakerReviewItems(
     item.firstStart = Math.min(item.firstStart, segment.start);
 
     if (item.samples.length < maxSamples) {
-      item.samples.push(text.length > 110 ? `${text.slice(0, 110)}...` : text);
+      item.samples.push(
+        text.length > REVIEW_SAMPLE_MAX_LEN
+          ? `${text.slice(0, REVIEW_SAMPLE_MAX_LEN)}...`
+          : text
+      );
     }
   }
 
