@@ -8,9 +8,18 @@ mehrsprachig, Diarisierung). Exportformat bleibt Cowork-kompatibel:
 
 ## End-User Installation
 
+> ⚠ **Hinweis zum aktuellen Release-Stand (Stand 2026-04-22):** Das
+> letzte veröffentlichte Release `v1.0.0` enthält noch den **alten**
+> Python/WhisperX-Installer und ist **nicht** mit dem aktuellen
+> Electron/Deepgram-Code kompatibel. Für einen Installer des aktuellen
+> Codes bitte einen neuen Release schneiden
+> (siehe [BUILDING.md](BUILDING.md), `npm run dist:win` / `dist:mac`)
+> oder direkt aus dem Source starten (`npm run dev`).
+
 ### Windows
 
-1. `EBA-Protokoll-Setup-<version>.exe` aus den Releases herunterladen.
+1. `EBA-Protokoll-Setup-<version>.exe` aus den Releases herunterladen
+   (sobald ein Electron-Release veröffentlicht ist — siehe Hinweis oben).
 2. Doppelklick. Dem Wizard folgen. Start-Menü- und Desktop-Verknüpfung
    werden automatisch angelegt.
 3. App starten, unter **Einstellungen** den Deepgram API-Key eintragen.
@@ -52,6 +61,17 @@ in den Einstellungen auswählen.
    als „Ich” markiert.
 6. Das Transkript landet unter `transkripte/` im Ausgabe-Verzeichnis.
    Format ist Cowork-kompatibel.
+
+### Weitere Funktionen
+
+- **Oberflächensprache** wechseln: DE / EN im Header.
+- **Glossar-Editor** (Einstellungen → Glossar): Profile mit Fachbegriffen
+  pflegen, die an Deepgram als `keyterm` mitgegeben werden.
+- **Deepgram-Qualität**: Modell-/Genauigkeits-Einstellungen unter
+  Einstellungen.
+- **Tastenkürzel**: `⌘/Ctrl + T` Transkribieren, `⌘/Ctrl + O` Datei
+  importieren, `⌘/Ctrl + ,` Einstellungen, `Esc` laufende Transkription
+  abbrechen.
 
 
 ## Keyterms / Glossar
