@@ -25,6 +25,104 @@ export function formatTimestamp(seconds: number): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+function formatSrtTimestamp(seconds: number): string {
+  const clamped = Math.max(0, seconds);
+  const totalMs = Math.round(clamped * 1000);
+  const ms = totalMs % 1000;
+  const totalSec = Math.floor(totalMs / 1000);
+  const hh = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+  const ss = String(totalSec % 60).padStart(2, "0");
+  const mmm = String(ms).padStart(3, "0");
+  return `${hh}:${mm}:${ss},${mmm}`;
+}
+
+const SRT_LINE_MAX = 42;
+const SRT_MAX_LINES = 2;
+
+/**
+ * Break text into chunks that each fit within SRT_MAX_LINES × SRT_LINE_MAX,
+ * splitting at word boundaries. A single word longer than SRT_LINE_MAX keeps
+ * its own line rather than being broken — readability > strict width.
+ */
+function splitIntoSrtChunks(text: string): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+  const chunks: string[] = [];
+  let lines: string[] = [];
+  let current = "";
+
+  const pushLine = () => {
+    if (current) {
+      lines.push(current);
+      current = "";
+    }
+    if (lines.length >= SRT_MAX_LINES) {
+      chunks.push(lines.join("\n"));
+      lines = [];
+    }
+  };
+
+  for (const word of words) {
+    if (!current) {
+      current = word;
+    } else if (current.length + 1 + word.length <= SRT_LINE_MAX) {
+      current = current + " " + word;
+    } else {
+      pushLine();
+      current = word;
+    }
+  }
+  pushLine();
+  if (lines.length) chunks.push(lines.join("\n"));
+  return chunks;
+}
+
+/**
+ * SubRip (.srt) subtitles built from segments. Cue format:
+ *   n
+ *   HH:MM:SS,mmm --> HH:MM:SS,mmm
+ *   Speaker: text
+ *
+ * Speaker names are substituted from `names` when present (same rule as
+ * `formatTranscript`). Utterances longer than 2×42 chars are split across
+ * multiple cues with timestamps distributed proportionally by character count,
+ * so each on-screen caption stays readable.
+ */
+export function formatSrt(
+  segments: Segment[],
+  names: Record<string, string>
+): string {
+  const cues: string[] = [];
+  let index = 1;
+  for (const s of segments) {
+    const text = s.text.trim();
+    if (!text) continue;
+    const label = names[s.speaker] ?? s.speaker;
+    const chunks = splitIntoSrtChunks(`${label}: ${text}`);
+    if (chunks.length === 0) continue;
+
+    const startSec = Math.max(0, s.start);
+    const endSec = Math.max(startSec, s.end);
+    const duration = endSec - startSec;
+    const charCounts = chunks.map((c) => c.length);
+    const totalChars = charCounts.reduce((a, b) => a + b, 0) || 1;
+
+    let cursor = startSec;
+    chunks.forEach((chunk, i) => {
+      const isLast = i === chunks.length - 1;
+      const chunkEnd = isLast
+        ? endSec
+        : cursor + (duration * charCounts[i]) / totalChars;
+      const timecode = `${formatSrtTimestamp(cursor)} --> ${formatSrtTimestamp(chunkEnd)}`;
+      cues.push(`${index}\n${timecode}\n${chunk}`);
+      index += 1;
+      cursor = chunkEnd;
+    });
+  }
+  return cues.length ? cues.join("\n\n") + "\n" : "";
+}
+
 /**
  * Cowork-compatible transcript: `[HH:MM:SS] Speaker: text` per line.
  * Speaker names are substituted from `names` when present.

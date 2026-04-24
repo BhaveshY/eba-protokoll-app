@@ -58,6 +58,7 @@ export function SettingsPanel({
   const [filterFillers, setFilterFillers] = useState(config.filterFillers);
   const [paragraphs, setParagraphs] = useState(config.paragraphs);
   const [summarize, setSummarize] = useState(config.summarize);
+  const [generateSrt, setGenerateSrt] = useState(config.generateSrt);
   const [keytermCount, setKeytermCount] = useState<number | null>(null);
   const [allDevices, setAllDevices] = useState<AudioInputDevice[]>([]);
   const [loopback, setLoopback] = useState<AudioInputDevice[]>([]);
@@ -91,6 +92,7 @@ export function SettingsPanel({
     setFilterFillers(config.filterFillers);
     setParagraphs(config.paragraphs);
     setSummarize(config.summarize);
+    setGenerateSrt(config.generateSrt);
     setAdvancedOpen(
       Boolean(
         config.systemAudioDevice ||
@@ -170,6 +172,7 @@ export function SettingsPanel({
           filterFillers,
           paragraphs,
           summarize,
+          generateSrt,
         },
       });
     } finally {
@@ -352,6 +355,12 @@ export function SettingsPanel({
                 onChange={setSummarize}
                 label={t("settings.intelligence.summarize")}
                 hint={t("settings.intelligence.summarize.hint")}
+              />
+              <Switch
+                checked={generateSrt}
+                onChange={setGenerateSrt}
+                label={t("settings.intelligence.srt")}
+                hint={t("settings.intelligence.srt.hint")}
               />
             </div>
           </Section>
