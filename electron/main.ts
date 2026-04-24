@@ -227,6 +227,7 @@ function sanitizeConfig(input: Partial<AppConfig>): AppConfig {
     filterFillers: readBoolean(input.filterFillers, DEFAULT_CONFIG.filterFillers),
     paragraphs: readBoolean(input.paragraphs, DEFAULT_CONFIG.paragraphs),
     summarize: readBoolean(input.summarize, DEFAULT_CONFIG.summarize),
+    generateSrt: readBoolean(input.generateSrt, DEFAULT_CONFIG.generateSrt),
   };
 }
 

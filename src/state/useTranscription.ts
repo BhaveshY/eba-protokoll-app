@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { transcribe, TranscriptionCancelled, TranscriptionError } from "../lib/deepgram";
-import { formatTranscript, responseToSegments, safeProject } from "../lib/transcript";
+import { formatSrt, formatTranscript, responseToSegments, safeProject } from "../lib/transcript";
 import type { Segment, TranscribeStage } from "../lib/types";
 import type { AppConfig } from "@shared/ipc";
 
@@ -112,6 +112,18 @@ export function useTranscription() {
             `${stem}.summary.txt`
           );
           await window.eba.fs.writeTranscript(summaryPath, summary.trim() + "\n");
+        }
+
+        // Sidecar .srt subtitles if enabled.
+        if (args.config.generateSrt) {
+          const srt = formatSrt(segments, {});
+          if (srt) {
+            const srtPath = await window.eba.fs.joinTranscriptPath(
+              args.config.outputDir,
+              `${stem}.srt`
+            );
+            await window.eba.fs.writeTranscript(srtPath, srt);
+          }
         }
 
         setState({

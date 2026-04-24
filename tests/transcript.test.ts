@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   cleanSpeakerNames,
   collectSpeakerReviewItems,
+  formatSrt,
   formatTimestamp,
   formatTranscript,
   humanSize,
@@ -9,6 +10,7 @@ import {
   safeProject,
   sampleQuotes,
 } from "../src/lib/transcript";
+import type { Segment } from "../src/lib/types";
 
 describe("formatTimestamp", () => {
   it("pads hours, minutes, seconds", () => {
@@ -169,5 +171,109 @@ describe("humanSize", () => {
     expect(humanSize(512)).toBe("512 B");
     expect(humanSize(2048)).toBe("2.0 KB");
     expect(humanSize(5 * 1024 * 1024)).toBe("5.0 MB");
+  });
+});
+
+describe("formatSrt", () => {
+  const seg = (
+    start: number,
+    end: number,
+    speaker: string,
+    text: string
+  ): Segment => ({ start, end, speaker, text });
+
+  it("returns empty string for empty input", () => {
+    expect(formatSrt([], {})).toBe("");
+  });
+
+  it("skips segments with blank text", () => {
+    const out = formatSrt([seg(0, 1, "Ich", "   ")], {});
+    expect(out).toBe("");
+  });
+
+  it("emits a single cue with comma-separated millis and speaker label", () => {
+    const out = formatSrt([seg(0, 3.5, "Sprecher 1", "Guten Morgen.")], {});
+    expect(out).toBe(
+      "1\n00:00:00,000 --> 00:00:03,500\nSprecher 1: Guten Morgen.\n"
+    );
+  });
+
+  it("numbers cues starting at 1 with blank line separators", () => {
+    const out = formatSrt(
+      [
+        seg(0, 1, "Ich", "Hallo."),
+        seg(1.2, 2.4, "Sprecher 1", "Hi."),
+        seg(2.5, 3.0, "Sprecher 2", "Servus."),
+      ],
+      {}
+    );
+    const lines = out.split("\n");
+    expect(lines[0]).toBe("1");
+    expect(lines[4]).toBe("2");
+    expect(lines[8]).toBe("3");
+    expect(out.split("\n\n").length).toBe(3);
+  });
+
+  it("pads hours, minutes, seconds, milliseconds correctly", () => {
+    const out = formatSrt([seg(3661.234, 3662.05, "Sprecher 1", "Text.")], {});
+    expect(out).toContain("01:01:01,234 --> 01:01:02,050");
+  });
+
+  it("substitutes renamed speakers from the names map", () => {
+    const out = formatSrt(
+      [seg(0, 1, "Sprecher 1", "Hallo.")],
+      { "Sprecher 1": "Anna" }
+    );
+    expect(out).toContain("Anna: Hallo.");
+    expect(out).not.toContain("Sprecher 1:");
+  });
+
+  it("splits utterances that exceed 2x42 chars into multiple cues", () => {
+    const long =
+      "Dies ist ein sehr langer Redebeitrag der unbedingt auf mehrere Zeilen umgebrochen werden muss damit er in einem Untertitel gut lesbar bleibt.";
+    const out = formatSrt([seg(0, 6, "Sprecher 1", long)], {});
+    const blocks = out.trim().split("\n\n");
+    // Should have produced 2+ cues for an utterance this long.
+    expect(blocks.length).toBeGreaterThan(1);
+    // Every cue body obeys the 2-line / 42-char budget.
+    for (const block of blocks) {
+      const bodyLines = block.split("\n").slice(2);
+      expect(bodyLines.length).toBeLessThanOrEqual(2);
+      for (const line of bodyLines) {
+        // Allow slack for single words longer than 42 chars (none in this fixture).
+        expect(line.length).toBeLessThanOrEqual(42);
+        expect(line.endsWith(" ")).toBe(false);
+      }
+    }
+    // Cue numbering is 1-based and sequential.
+    const indices = blocks.map((b) => Number(b.split("\n")[0]));
+    expect(indices).toEqual(indices.map((_, i) => i + 1));
+  });
+
+  it("distributes split-cue timestamps across the segment range", () => {
+    const long =
+      "Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu.";
+    const out = formatSrt([seg(10, 20, "Sprecher 1", long)], {});
+    const blocks = out.trim().split("\n\n");
+    expect(blocks.length).toBeGreaterThan(1);
+    const parseCue = (block: string) => {
+      const [_, timecode] = block.split("\n");
+      const [start, end] = timecode.split(" --> ");
+      return { start, end };
+    };
+    const first = parseCue(blocks[0]);
+    const last = parseCue(blocks[blocks.length - 1]);
+    // First cue starts at segment start, last cue ends at segment end.
+    expect(first.start).toBe("00:00:10,000");
+    expect(last.end).toBe("00:00:20,000");
+    // Cues are contiguous: each cue's end equals the next cue's start.
+    for (let i = 0; i < blocks.length - 1; i++) {
+      expect(parseCue(blocks[i]).end).toBe(parseCue(blocks[i + 1]).start);
+    }
+  });
+
+  it("never negative: clamps negative starts to 00:00:00,000", () => {
+    const out = formatSrt([seg(-0.1, 0.5, "Sprecher 1", "Text.")], {});
+    expect(out).toContain("00:00:00,000 --> 00:00:00,500");
   });
 });

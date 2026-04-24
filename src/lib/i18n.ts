@@ -146,6 +146,9 @@ const de = {
   "settings.intelligence.summarize": "Zusammenfassung erzeugen",
   "settings.intelligence.summarize.hint":
     "Speichert eine kurze Zusammenfassung als .summary.txt neben dem Transkript.",
+  "settings.intelligence.srt": "Untertiteldatei (.srt) erzeugen",
+  "settings.intelligence.srt.hint":
+    "Speichert Untertitel als .srt neben dem Transkript. Funktioniert direkt mit VLC, QuickTime und <video>-Tags.",
   "settings.transcriptLanguage.multi": "Mehrsprachig (empfohlen)",
   "settings.transcriptLanguage.de": "Deutsch",
   "settings.transcriptLanguage.en": "Englisch",
@@ -354,6 +357,9 @@ const en: Dict = {
   "settings.intelligence.summarize": "Generate summary",
   "settings.intelligence.summarize.hint":
     "Saves a short summary as .summary.txt alongside the transcript.",
+  "settings.intelligence.srt": "Generate subtitle file (.srt)",
+  "settings.intelligence.srt.hint":
+    "Saves subtitles as .srt alongside the transcript. Works out of the box with VLC, QuickTime, and HTML <video>.",
   "settings.transcriptLanguage.multi": "Multilingual (recommended)",
   "settings.transcriptLanguage.de": "German",
   "settings.transcriptLanguage.en": "English",
