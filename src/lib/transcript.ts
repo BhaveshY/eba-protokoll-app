@@ -1,10 +1,28 @@
-import type { DeepgramResponse, DeepgramUtterance, Segment } from "./types";
+import type {
+  DeepgramAlternative,
+  DeepgramResponse,
+  DeepgramUtterance,
+  DeepgramWord,
+  Segment,
+} from "./types";
 
 const SPEAKER_ME = "Ich";
 const DEFAULT_SPEAKER_PREFIX = "Sprecher";
-const DEFAULT_SPEAKER_FALLBACK = `${DEFAULT_SPEAKER_PREFIX} 1`;
 const SAMPLE_QUOTES_DEFAULT_MAX_LEN = 120;
 const REVIEW_SAMPLE_MAX_LEN = 110;
+const CHANNEL_WORD_SEGMENT_GAP_SEC = 1.5;
+const CHANNEL_COMPLETENESS_MIN_EXTRA_WORDS = 3;
+const CHANNEL_COMPLETENESS_MIN_EXTRA_RATIO = 0.05;
+const LOCAL_SUMMARY_MAX_ITEMS = 6;
+const LOCAL_SUMMARY_MAX_TEXT_LEN = 220;
+
+interface RawSegment {
+  start: number;
+  end: number;
+  channel?: number | string;
+  speaker?: number | string;
+  text: string;
+}
 
 export interface SpeakerReviewItem {
   id: string;
@@ -160,46 +178,355 @@ function wrapCueText(text: string, maxLineLength = 42): string[] {
   return lines.length ? lines : [text];
 }
 
-function utteranceSpeakerLabel(
-  utt: DeepgramUtterance,
-  isRecordedStereo: boolean
-): string {
-  if (isRecordedStereo && utt?.channel === 0) return SPEAKER_ME;
-  const speaker = utt?.speaker;
-  if (speaker === undefined || speaker === null) return DEFAULT_SPEAKER_FALLBACK;
-  const n = Number(speaker);
-  if (!Number.isFinite(n)) return DEFAULT_SPEAKER_FALLBACK;
-  return `${DEFAULT_SPEAKER_PREFIX} ${Math.floor(n) + 1}`;
-}
-
 /**
  * Normalize a Deepgram response into `{start,end,speaker,text}` segments,
  * sorted by start time, with empty transcripts dropped.
  *
  * Recorded stereo (mic=L, system=R):
- *   channel 0 -> "Ich"
- *   channel 1 + speaker n -> "Sprecher n+1"
+ *   Deepgram speaker IDs stay channel-aware so equal IDs on different
+ *   channels do not get merged. "Ich" is only used when channel 0 has
+ *   no speaker label from Deepgram.
  * Imported files:
- *   speaker n -> "Sprecher n+1"
+ *   Deepgram speaker IDs are preserved as stable Sprecher labels.
  */
 export function responseToSegments(
   response: DeepgramResponse,
   isRecordedStereo: boolean
 ): Segment[] {
-  const utterances = response.results?.utterances ?? [];
-  const segments: Segment[] = [];
+  const utteranceSegments = utterancesToSegments(
+    response.results?.utterances ?? [],
+    isRecordedStereo
+  );
+  const channelSegments = channelsToSegments(response, isRecordedStereo);
+
+  if (!utteranceSegments.length) return channelSegments;
+  if (!channelSegments.length) return utteranceSegments;
+  if (isRicherTranscript(channelSegments, utteranceSegments)) {
+    return channelSegments;
+  }
+  return utteranceSegments;
+}
+
+function utterancesToSegments(
+  utterances: DeepgramUtterance[],
+  isRecordedStereo: boolean
+): Segment[] {
+  const segments: RawSegment[] = [];
   for (const u of utterances) {
     const text = (u.transcript ?? "").trim();
     if (!text) continue;
     segments.push({
       start: Number(u.start ?? 0),
       end: Number(u.end ?? 0),
-      speaker: utteranceSpeakerLabel(u, isRecordedStereo),
+      channel: u.channel,
+      speaker: u.speaker,
       text,
     });
   }
-  segments.sort((a, b) => a.start - b.start);
+  return labelSegments(segments, isRecordedStereo);
+}
+
+function channelsToSegments(
+  response: DeepgramResponse,
+  isRecordedStereo: boolean
+): Segment[] {
+  const channels = response.results?.channels ?? [];
+  const segments: RawSegment[] = [];
+  const seenChannelTexts = new Set<string>();
+
+  channels.forEach((channel, channelIndex) => {
+    const alternative = firstUsableAlternative(channel.alternatives ?? []);
+    if (!alternative) return;
+
+    const comparisonText = comparisonTextForAlternative(alternative);
+    if (comparisonText) {
+      const key = normalizeForComparison(comparisonText);
+      if (seenChannelTexts.has(key)) return;
+      seenChannelTexts.add(key);
+    }
+
+    const wordSegments = wordsToSegments(
+      alternative.words ?? [],
+      channelIndex,
+      isRecordedStereo
+    );
+    if (wordSegments.length) {
+      segments.push(...wordSegments);
+      return;
+    }
+
+    const paragraphSegments = paragraphSegmentsFromAlternative(
+      alternative,
+      channelIndex
+    );
+    if (paragraphSegments.length) {
+      segments.push(...paragraphSegments);
+      return;
+    }
+
+    const text = cleanSegmentText(
+      alternative.paragraphs?.transcript || alternative.transcript || ""
+    );
+    if (text) {
+      segments.push({
+        start: 0,
+        end: 0,
+        channel: channelIndex,
+        text,
+      });
+    }
+  });
+
+  return labelSegments(segments, isRecordedStereo);
+}
+
+function firstUsableAlternative(
+  alternatives: DeepgramAlternative[]
+): DeepgramAlternative | null {
+  for (const alternative of alternatives) {
+    if (comparisonTextForAlternative(alternative)) return alternative;
+  }
+  return null;
+}
+
+function comparisonTextForAlternative(alternative: DeepgramAlternative): string {
+  const direct = cleanSegmentText(
+    alternative.paragraphs?.transcript || alternative.transcript || ""
+  );
+  if (direct) return direct;
+  return cleanSegmentText((alternative.words ?? []).map(wordText).join(" "));
+}
+
+function wordsToSegments(
+  words: DeepgramWord[],
+  channelIndex: number,
+  isRecordedStereo: boolean
+): RawSegment[] {
+  const segments: RawSegment[] = [];
+  let current: RawSegment | null = null;
+  let currentWords: string[] = [];
+
+  const flush = () => {
+    if (!current) return;
+    const text = cleanJoinedWords(currentWords);
+    if (text) segments.push({ ...current, text });
+    current = null;
+    currentWords = [];
+  };
+
+  for (const word of words) {
+    const text = wordText(word);
+    if (!text) continue;
+
+    const start = safeSeconds(word.start);
+    const end = Math.max(start, safeSeconds(word.end, start));
+    if (
+      !current ||
+      rawSpeakerIdentity(current.channel, current.speaker, isRecordedStereo) !==
+        rawSpeakerIdentity(channelIndex, word.speaker, isRecordedStereo) ||
+      start - current.end > CHANNEL_WORD_SEGMENT_GAP_SEC
+    ) {
+      flush();
+      current = {
+        start,
+        end,
+        channel: channelIndex,
+        speaker: word.speaker,
+        text: "",
+      };
+      currentWords = [text];
+      continue;
+    }
+
+    current.end = Math.max(current.end, end);
+    currentWords.push(text);
+  }
+
+  flush();
   return segments;
+}
+
+function paragraphSegmentsFromAlternative(
+  alternative: DeepgramAlternative,
+  channelIndex: number
+): RawSegment[] {
+  const segments: RawSegment[] = [];
+  for (const paragraph of alternative.paragraphs?.paragraphs ?? []) {
+    for (const sentence of paragraph.sentences ?? []) {
+      const text = cleanSegmentText(sentence.text ?? "");
+      if (!text) continue;
+      const start = safeSeconds(sentence.start, safeSeconds(paragraph.start));
+      const end = safeSeconds(sentence.end, safeSeconds(paragraph.end, start));
+      segments.push({
+        start,
+        end: Math.max(start, end),
+        channel: channelIndex,
+        speaker: paragraph.speaker,
+        text,
+      });
+    }
+  }
+  return segments;
+}
+
+function labelSegments(
+  rawSegments: RawSegment[],
+  isRecordedStereo: boolean
+): Segment[] {
+  const labelFor = createSpeakerLabeler(isRecordedStereo);
+  return rawSegments
+    .filter((segment) => cleanSegmentText(segment.text))
+    .sort((a, b) => a.start - b.start)
+    .map((segment) => ({
+      start: segment.start,
+      end: segment.end,
+      speaker: labelFor(segment.channel, segment.speaker),
+      text: cleanSegmentText(segment.text),
+    }));
+}
+
+function createSpeakerLabeler(isRecordedStereo: boolean) {
+  const labels = new Map<string, string>();
+  let nextSpeaker = 1;
+
+  return (channel?: number | string, speaker?: number | string): string => {
+    if (isRecordedStereo && isChannelZero(channel) && !hasUsableSpeaker(speaker)) {
+      return SPEAKER_ME;
+    }
+
+    const key = rawSpeakerIdentity(channel, speaker, isRecordedStereo);
+    const existing = labels.get(key);
+    if (existing) return existing;
+
+    const label = `${DEFAULT_SPEAKER_PREFIX} ${nextSpeaker}`;
+    nextSpeaker += 1;
+    labels.set(key, label);
+    return label;
+  };
+}
+
+function rawSpeakerIdentity(
+  channel: number | string | undefined,
+  speaker: number | string | undefined,
+  isRecordedStereo: boolean
+): string {
+  const speakerKey = hasUsableSpeaker(speaker)
+    ? String(Math.floor(Number(speaker)))
+    : "unknown";
+  if (!isRecordedStereo) return `speaker:${speakerKey}`;
+  return `channel:${channelKey(channel)}|speaker:${speakerKey}`;
+}
+
+function channelKey(channel: number | string | undefined): string {
+  const n = Number(channel);
+  return Number.isFinite(n) ? String(Math.floor(n)) : "unknown";
+}
+
+function hasUsableSpeaker(speaker: number | string | undefined): boolean {
+  if (speaker === undefined || speaker === null) return false;
+  return Number.isFinite(Number(speaker));
+}
+
+function isChannelZero(channel: number | string | undefined): boolean {
+  const n = Number(channel);
+  return Number.isFinite(n) && Math.floor(n) === 0;
+}
+
+function isRicherTranscript(candidate: Segment[], baseline: Segment[]): boolean {
+  const candidateWords = segmentWordCount(candidate);
+  const baselineWords = segmentWordCount(baseline);
+  const requiredExtra = Math.max(
+    CHANNEL_COMPLETENESS_MIN_EXTRA_WORDS,
+    Math.ceil(baselineWords * CHANNEL_COMPLETENESS_MIN_EXTRA_RATIO)
+  );
+  return candidateWords >= baselineWords + requiredExtra;
+}
+
+function segmentWordCount(segments: Segment[]): number {
+  return wordCount(segments.map((s) => s.text).join(" "));
+}
+
+function wordCount(text: string): number {
+  return text.match(/[\p{L}\p{N}]+/gu)?.length ?? 0;
+}
+
+function wordText(word: DeepgramWord): string {
+  return cleanSegmentText(word.punctuated_word || word.word || "");
+}
+
+function cleanJoinedWords(words: string[]): string {
+  return cleanSegmentText(words.join(" "))
+    .replace(/\s+([,.;:!?%])/g, "$1")
+    .replace(/([¿¡])\s+/g, "$1");
+}
+
+function cleanSegmentText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizeForComparison(value: string): string {
+  return cleanSegmentText(value).toLocaleLowerCase();
+}
+
+function safeSeconds(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+export function extractDeepgramSummary(response: DeepgramResponse): string {
+  const summary = response.results?.summary;
+  if (!summary || summary.result?.toLowerCase() === "failure") return "";
+  const text = cleanSegmentText(summary.short || "");
+  if (/summarization.*only available in english/i.test(text)) return "";
+  return text;
+}
+
+export function formatSummary(
+  segments: Segment[],
+  deepgramSummary = ""
+): string {
+  const remoteSummary = cleanSegmentText(deepgramSummary);
+  if (remoteSummary) return remoteSummary;
+
+  const items = localSummaryItems(segments);
+  if (!items.length) return "";
+  return ["Zusammenfassung", "", ...items.map((item) => `- ${item}`)].join("\n");
+}
+
+function localSummaryItems(segments: Segment[]): string[] {
+  const candidates = segments.filter((s) => cleanSegmentText(s.text));
+  if (!candidates.length) return [];
+
+  if (candidates.length <= LOCAL_SUMMARY_MAX_ITEMS) {
+    return candidates.map(summaryItemText);
+  }
+
+  const selected = new Set<number>([0, 1, candidates.length - 1]);
+  const byLength = candidates
+    .map((segment, index) => ({ index, words: wordCount(segment.text) }))
+    .filter((item) => !selected.has(item.index))
+    .sort((a, b) => b.words - a.words || a.index - b.index);
+
+  for (const item of byLength) {
+    selected.add(item.index);
+    if (selected.size >= LOCAL_SUMMARY_MAX_ITEMS) break;
+  }
+
+  return [...selected]
+    .sort((a, b) => candidates[a].start - candidates[b].start)
+    .map((index) => summaryItemText(candidates[index]));
+}
+
+function summaryItemText(segment: Segment): string {
+  return `${formatTimestamp(segment.start)} ${segment.speaker}: ${truncateText(
+    cleanSegmentText(segment.text),
+    LOCAL_SUMMARY_MAX_TEXT_LEN
+  )}`;
+}
+
+function truncateText(value: string, maxLen: number): string {
+  if (value.length <= maxLen) return value;
+  return value.slice(0, maxLen - 3).trimEnd() + "...";
 }
 
 /**

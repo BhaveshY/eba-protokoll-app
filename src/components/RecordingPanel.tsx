@@ -4,7 +4,7 @@ import clsx from "../lib/clsx";
 import { findDeviceByHint, listInputDevices } from "../lib/devices";
 import { useT, type TranslateFn } from "../lib/i18n";
 import { MeetingRecorder, type RecordingResult } from "../lib/recorder";
-import { humanSize } from "../lib/transcript";
+import { humanSize, safeProject } from "../lib/transcript";
 import { Card } from "./ui/Card";
 import { RecordingDot } from "./ui/RecordingDot";
 
@@ -16,6 +16,8 @@ export interface LoadedAudio {
   isRecordedStereo: boolean;
   durationSec: number;
   source: "recorded" | "imported";
+  recordingPath?: string;
+  recordingSaveError?: string;
 }
 
 export function RecordingPanel({
@@ -64,18 +66,15 @@ export function RecordingPanel({
   useEffect(() => {
     if (mode === "idle") setStatusText(t("record.status.ready"));
     else if (mode === "imported") setStatusText(t("record.status.readyToTranscribeFile"));
+    else if (mode === "stopped" && loaded) setStatusText(statusForLoadedAudio(loaded, t));
     else if (mode === "stopped") setStatusText(t("record.status.readyToTranscribeRec"));
-  }, [t, mode]);
+  }, [loaded, t, mode]);
 
   useEffect(() => {
     if (!loaded) return;
     setMode(loaded.source === "imported" ? "imported" : "stopped");
     setElapsed(loaded.durationSec);
-    setStatusText(
-      loaded.source === "imported"
-        ? t("record.status.readyToTranscribeFile")
-        : t("record.status.readyToTranscribeRec")
-    );
+    setStatusText(statusForLoadedAudio(loaded, t));
   }, [loaded, t]);
 
   const loadImportedAudio = useCallback(
@@ -133,15 +132,28 @@ export function RecordingPanel({
       const result: RecordingResult = await rec.stop();
       recorderRef.current = null;
       setMode("stopped");
-      const filename = `${projectName.trim() || "Besprechung"}.wav`;
+      const filename = recordingFilename(projectName);
+      let recordingPath = "";
+      let recordingSaveError = "";
+      try {
+        recordingPath = await window.eba.fs.saveRecording(
+          config.outputDir,
+          filename,
+          await result.stereo.arrayBuffer()
+        );
+      } catch (err) {
+        recordingSaveError = (err as Error).message;
+        onLog("error", `record save: ${recordingSaveError}`);
+      }
       onLoaded({
         blob: result.stereo,
         filename,
         isRecordedStereo: result.usedSystemAudio,
         durationSec: result.durationSec,
         source: "recorded",
+        ...(recordingPath ? { recordingPath } : {}),
+        ...(recordingSaveError ? { recordingSaveError } : {}),
       });
-      setStatusText(t("record.status.readyToTranscribeRec"));
     } catch (err) {
       rec.abort();
       recorderRef.current = null;
@@ -149,7 +161,7 @@ export function RecordingPanel({
       onLog("error", `record stop: ${(err as Error).message}`);
       setStatusText(t("record.status.stopError", { msg: (err as Error).message }));
     }
-  }, [onLoaded, onLog, projectName, t]);
+  }, [config.outputDir, onLoaded, onLog, projectName, t]);
 
   const importFile = useCallback(async () => {
     if (disabled) return;
@@ -351,6 +363,36 @@ function describeLoadedAudio(audio: LoadedAudio, t: TranslateFn): string {
       ? t("record.summary.modeStereo")
       : t("record.summary.modeMono"),
   });
+}
+
+function statusForLoadedAudio(audio: LoadedAudio, t: TranslateFn): string {
+  if (audio.source === "imported") return t("record.status.readyToTranscribeFile");
+  if (audio.recordingSaveError) {
+    return t("record.status.saveError", { msg: audio.recordingSaveError });
+  }
+  if (audio.recordingPath) return t("record.status.savedRecording");
+  return t("record.status.readyToTranscribeRec");
+}
+
+function recordingFilename(projectName: string): string {
+  const project = safeProject(projectName.trim() || "Besprechung").trim();
+  return `${project || "Besprechung"}_${timestampForFile()}.wav`;
+}
+
+function timestampForFile(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    d.getFullYear() +
+    "-" +
+    pad(d.getMonth() + 1) +
+    "-" +
+    pad(d.getDate()) +
+    "_" +
+    pad(d.getHours()) +
+    pad(d.getMinutes()) +
+    pad(d.getSeconds())
+  );
 }
 
 function hasFiles(data: DataTransfer | null): boolean {

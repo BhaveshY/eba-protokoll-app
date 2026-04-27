@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   cleanSpeakerNames,
   collectSpeakerReviewItems,
+  extractDeepgramSummary,
   formatSubRip,
   formatSubRipTimestamp,
+  formatSummary,
   formatTimestamp,
   formatTranscript,
   humanSize,
@@ -35,7 +37,7 @@ describe("formatSubRipTimestamp", () => {
 describe("responseToSegments", () => {
   const resp = (utterances: any[]) => ({ results: { utterances } });
 
-  it("maps channel 0 to Ich for recorded stereo", () => {
+  it("keeps diarized recorded-stereo speakers separate by channel", () => {
     const segs = responseToSegments(
       resp([
         { start: 0, end: 1, channel: 0, speaker: 0, transcript: "Guten Morgen." },
@@ -44,7 +46,19 @@ describe("responseToSegments", () => {
       ]),
       true
     );
-    expect(segs.map((s) => s.speaker)).toEqual(["Ich", "Sprecher 1", "Sprecher 2"]);
+    expect(segs.map((s) => s.speaker)).toEqual([
+      "Sprecher 1",
+      "Sprecher 2",
+      "Sprecher 3",
+    ]);
+  });
+
+  it("uses Ich only as recorded-stereo fallback when Deepgram has no speaker", () => {
+    const segs = responseToSegments(
+      resp([{ start: 0, end: 1, channel: 0, transcript: "Fallback." }]),
+      true
+    );
+    expect(segs[0].speaker).toBe("Ich");
   });
 
   it("never produces Ich for imported files", () => {
@@ -90,6 +104,78 @@ describe("responseToSegments", () => {
     );
     expect(segs[0].speaker).toBe("Sprecher 1");
   });
+
+  it("does not merge identical speaker numbers from different recorded channels", () => {
+    const segs = responseToSegments(
+      resp([
+        { start: 0, end: 1, channel: 0, speaker: 0, transcript: "Local." },
+        { start: 1, end: 2, channel: 1, speaker: 0, transcript: "Remote." },
+      ]),
+      true
+    );
+    expect(segs.map((s) => s.speaker)).toEqual(["Sprecher 1", "Sprecher 2"]);
+  });
+
+  it("uses channel alternatives when utterances are absent", () => {
+    const segs = responseToSegments({
+      results: {
+        channels: [{
+          alternatives: [{
+            transcript:
+              "Guten Morgen zusammen. Today we need to approve the budget.",
+            words: [
+              { start: 0, end: 0.2, word: "guten", punctuated_word: "Guten" },
+              { start: 0.2, end: 0.4, word: "morgen", punctuated_word: "Morgen" },
+              { start: 0.4, end: 0.8, word: "zusammen", punctuated_word: "zusammen." },
+              { start: 0.9, end: 1.1, word: "today", punctuated_word: "Today" },
+              { start: 1.1, end: 1.2, word: "we", punctuated_word: "we" },
+              { start: 1.2, end: 1.4, word: "need", punctuated_word: "need" },
+              { start: 1.4, end: 1.6, word: "to", punctuated_word: "to" },
+              { start: 1.6, end: 1.8, word: "approve", punctuated_word: "approve" },
+              { start: 1.8, end: 2.1, word: "the", punctuated_word: "the" },
+              { start: 2.1, end: 2.5, word: "budget", punctuated_word: "budget." },
+            ],
+          }],
+        }],
+      },
+    }, false);
+
+    expect(segs.map((s) => s.text).join(" ")).toContain("Guten Morgen");
+    expect(segs.map((s) => s.text).join(" ")).toContain("approve the budget");
+  });
+
+  it("prefers channel alternatives when utterances are incomplete", () => {
+    const segs = responseToSegments({
+      results: {
+        utterances: [
+          { start: 1, end: 3, speaker: 0, transcript: "Today we approve the budget." },
+        ],
+        channels: [{
+          alternatives: [{
+            transcript:
+              "Guten Morgen zusammen. Today we approve the budget after reviewing costs.",
+            words: [
+              { start: 0, end: 0.2, word: "guten", punctuated_word: "Guten" },
+              { start: 0.2, end: 0.4, word: "morgen", punctuated_word: "Morgen" },
+              { start: 0.4, end: 0.8, word: "zusammen", punctuated_word: "zusammen." },
+              { start: 1, end: 1.2, word: "today", punctuated_word: "Today" },
+              { start: 1.2, end: 1.4, word: "we", punctuated_word: "we" },
+              { start: 1.4, end: 1.8, word: "approve", punctuated_word: "approve" },
+              { start: 1.8, end: 2, word: "the", punctuated_word: "the" },
+              { start: 2, end: 2.4, word: "budget", punctuated_word: "budget" },
+              { start: 2.4, end: 2.7, word: "after", punctuated_word: "after" },
+              { start: 2.7, end: 3.1, word: "reviewing", punctuated_word: "reviewing" },
+              { start: 3.1, end: 3.4, word: "costs", punctuated_word: "costs." },
+            ],
+          }],
+        }],
+      },
+    }, false);
+
+    const text = segs.map((s) => s.text).join(" ");
+    expect(text).toContain("Guten Morgen");
+    expect(text).toContain("reviewing costs");
+  });
 });
 
 describe("formatTranscript", () => {
@@ -108,6 +194,34 @@ describe("formatTranscript", () => {
     expect(formatTranscript(segs, { "Sprecher 1": "Herr Mueller" })).toBe(
       "[00:00:00] Herr Mueller: Hallo."
     );
+  });
+});
+
+describe("formatSummary", () => {
+  it("uses a valid Deepgram summary when available", () => {
+    const summary = extractDeepgramSummary({
+      results: { summary: { short: "A short meeting summary." } },
+    });
+    expect(formatSummary([], summary)).toBe("A short meeting summary.");
+  });
+
+  it("falls back to a local summary for non-English or mixed transcripts", () => {
+    const summary = extractDeepgramSummary({
+      results: { summary: { result: "failure" } },
+    });
+    const out = formatSummary([
+      { start: 0, end: 1, speaker: "Ich", text: "Guten Morgen zusammen." },
+      {
+        start: 2,
+        end: 4,
+        speaker: "Sprecher 1",
+        text: "Today we approve the budget.",
+      },
+    ], summary);
+
+    expect(out).toContain("Zusammenfassung");
+    expect(out).toContain("Guten Morgen");
+    expect(out).toContain("approve the budget");
   });
 });
 

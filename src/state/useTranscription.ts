@@ -1,7 +1,13 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { transcribe, TranscriptionCancelled, TranscriptionError } from "../lib/deepgram";
+import {
+  transcribe,
+  TranscriptionCancelled,
+  TranscriptionError,
+} from "../lib/deepgram";
 import {
   formatSubRip,
+  extractDeepgramSummary,
+  formatSummary,
   formatTranscript,
   responseToSegments,
   safeProject,
@@ -98,6 +104,11 @@ export function useTranscription() {
         }));
 
         const segments = responseToSegments(response, args.isRecordedStereo);
+        if (!segments.length) {
+          throw new TranscriptionError(
+            "Deepgram hat keinen Transkript-Text zurueckgegeben. Die Aufnahme wurde nicht als leeres Transkript gespeichert."
+          );
+        }
 
         setState((s) => ({ ...s, stage: "save", status: "Transkript speichern" }));
 
@@ -122,17 +133,18 @@ export function useTranscription() {
           );
         }
 
-        // Sidecar summary if Deepgram returned one.
-        const summary =
-          response.results?.summary?.short ||
-          response.results?.summary?.result ||
-          "";
-        if (args.config.summarize && summary.trim()) {
-          const summaryPath = await window.eba.fs.joinTranscriptPath(
-            args.config.outputDir,
-            `${stem}.summary.txt`
+        if (args.config.summarize) {
+          const summary = formatSummary(
+            segments,
+            extractDeepgramSummary(response)
           );
-          await window.eba.fs.writeTranscript(summaryPath, summary.trim() + "\n");
+          if (summary.trim()) {
+            const summaryPath = await window.eba.fs.joinTranscriptPath(
+              args.config.outputDir,
+              `${stem}.summary.txt`
+            );
+            await window.eba.fs.writeTranscript(summaryPath, summary.trim() + "\n");
+          }
         }
 
         setState({

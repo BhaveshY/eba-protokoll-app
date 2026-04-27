@@ -8,13 +8,52 @@ export interface Segment {
 export interface DeepgramUtterance {
   start?: number;
   end?: number;
-  channel?: number;
+  channel?: number | string;
   speaker?: number | string;
   transcript?: string;
 }
 
+export interface DeepgramWord {
+  word?: string;
+  punctuated_word?: string;
+  start?: number;
+  end?: number;
+  speaker?: number | string;
+  language?: string;
+}
+
+export interface DeepgramSentence {
+  text?: string;
+  start?: number;
+  end?: number;
+}
+
+export interface DeepgramParagraph {
+  sentences?: DeepgramSentence[];
+  speaker?: number | string;
+  start?: number;
+  end?: number;
+}
+
+export interface DeepgramParagraphs {
+  transcript?: string;
+  paragraphs?: DeepgramParagraph[];
+}
+
+export interface DeepgramAlternative {
+  transcript?: string;
+  words?: DeepgramWord[];
+  languages?: string[];
+  paragraphs?: DeepgramParagraphs;
+}
+
+export interface DeepgramChannel {
+  alternatives?: DeepgramAlternative[];
+}
+
 export interface DeepgramResponse {
   results?: {
+    channels?: DeepgramChannel[];
     utterances?: DeepgramUtterance[];
     summary?: {
       short?: string;

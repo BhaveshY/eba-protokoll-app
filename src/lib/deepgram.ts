@@ -37,8 +37,9 @@ export function contentTypeFor(filename: string): string {
 
 export function buildQuery(opts: TranscribeOptions): URLSearchParams {
   const q = new URLSearchParams();
+  const language = opts.language || "multi";
   q.set("model", opts.model ?? "nova-3");
-  q.set("language", opts.language || "multi");
+  q.set("language", language);
   q.set("multichannel", String(opts.multichannel));
   q.set("diarize", String(opts.diarize ?? true));
   q.set("utterances", String(opts.utterances ?? true));
@@ -46,12 +47,19 @@ export function buildQuery(opts: TranscribeOptions): URLSearchParams {
   q.set("punctuate", String(opts.punctuate ?? true));
   if (opts.paragraphs ?? true) q.set("paragraphs", "true");
   if (opts.filterFillers) q.set("filler_words", "false");
-  if (opts.summarize) q.set("summarize", "v2");
+  if (opts.summarize && supportsDeepgramSummary(language)) {
+    q.set("summarize", "v2");
+  }
   for (const term of opts.keyterms ?? []) {
     const t = term.trim();
     if (t) q.append("keyterm", t);
   }
   return q;
+}
+
+export function supportsDeepgramSummary(language: string): boolean {
+  const normalized = language.trim().toLowerCase();
+  return normalized === "en" || normalized.startsWith("en-");
 }
 
 export interface TranscribeArgs {

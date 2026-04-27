@@ -67,6 +67,7 @@ export interface EbaApi {
   fs: {
     ensureOutputDirs(base: string): Promise<void>;
     writeTranscript(path: string, text: string): Promise<void>;
+    saveRecording(base: string, filename: string, bytes: ArrayBuffer): Promise<string>;
     listTranscripts(base: string, limit?: number): Promise<RecentTranscript[]>;
     readFileAsBytes(path: string): Promise<ArrayBuffer>;
     revealInFolder(path: string): Promise<void>;

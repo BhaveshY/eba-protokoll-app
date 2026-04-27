@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildQuery,
   contentTypeFor,
+  supportsDeepgramSummary,
   transcribe,
   TranscriptionCancelled,
   TranscriptionError,
@@ -76,6 +77,25 @@ describe("buildQuery", () => {
       keyterms: ["Baugesuch", "  ", "", "Rohbau"],
     });
     expect(q.getAll("keyterm")).toEqual(["Baugesuch", "Rohbau"]);
+  });
+
+  it("does not request Deepgram summaries for multilingual transcripts", () => {
+    const q = buildQuery({ ...baseOpts, summarize: true });
+    expect(q.has("summarize")).toBe(false);
+  });
+
+  it("requests Deepgram summaries only for English transcripts", () => {
+    const q = buildQuery({ ...baseOpts, language: "en", summarize: true });
+    expect(q.get("summarize")).toBe("v2");
+  });
+});
+
+describe("supportsDeepgramSummary", () => {
+  it("only supports English language codes", () => {
+    expect(supportsDeepgramSummary("en")).toBe(true);
+    expect(supportsDeepgramSummary("en-US")).toBe(true);
+    expect(supportsDeepgramSummary("multi")).toBe(false);
+    expect(supportsDeepgramSummary("de")).toBe(false);
   });
 });
 

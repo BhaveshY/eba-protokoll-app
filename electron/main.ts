@@ -131,6 +131,50 @@ async function listTranscripts(base: string, limit = 8): Promise<RecentTranscrip
   return items.slice(0, limit);
 }
 
+async function saveRecording(
+  base: string,
+  filename: string,
+  bytes: ArrayBuffer | ArrayBufferView
+): Promise<string> {
+  if (!base.trim()) throw new Error("Ausgabe-Verzeichnis fehlt.");
+  const folder = path.join(base, "aufnahmen");
+  await fsp.mkdir(folder, { recursive: true });
+  const safeName = safeArtifactFilename(filename, "aufnahme.wav");
+  const target = await uniqueFilePath(folder, safeName);
+  await fsp.writeFile(target, bufferFromBytes(bytes));
+  return target;
+}
+
+function bufferFromBytes(bytes: ArrayBuffer | ArrayBufferView): Buffer {
+  if (bytes instanceof ArrayBuffer) return Buffer.from(new Uint8Array(bytes));
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+}
+
+function safeArtifactFilename(filename: string, fallback: string): string {
+  const name = path.basename(filename.trim() || fallback);
+  const cleaned = name
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || fallback;
+}
+
+async function uniqueFilePath(folder: string, filename: string): Promise<string> {
+  const ext = path.extname(filename);
+  const stem = path.basename(filename, ext) || "aufnahme";
+  for (let i = 0; i < 10_000; i++) {
+    const suffix = i === 0 ? "" : `-${i + 1}`;
+    const candidate = path.join(folder, `${stem}${suffix}${ext}`);
+    try {
+      await fsp.stat(candidate);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return candidate;
+      throw err;
+    }
+  }
+  throw new Error("Kein freier Dateiname fuer Aufnahme gefunden.");
+}
+
 async function matchingSubtitlePath(
   folder: string,
   transcriptName: string
@@ -282,6 +326,12 @@ function registerIpc(): void {
       await fsp.mkdir(path.dirname(p), { recursive: true });
       await fsp.writeFile(p, text, "utf8");
     }
+  );
+
+  ipcMain.handle(
+    "fs:saveRecording",
+    async (_evt, base: string, filename: string, bytes: ArrayBuffer) =>
+      await saveRecording(base, filename, bytes)
   );
 
   ipcMain.handle(

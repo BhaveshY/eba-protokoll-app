@@ -353,7 +353,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
               <kbd>Esc</kbd> {t("app.footer.cancel")}
             </span>
           </span>
-          <span className="text-fg-subtle ml-auto">v0.1.0</span>
+          <span className="text-fg-subtle ml-auto">v0.1.1</span>
         </div>
       </footer>
 

@@ -46,11 +46,11 @@ in den Einstellungen auswählen.
 1. **Deepgram API-Key** unter Einstellungen eintragen (Keychain).
 2. **Aufnahme starten** klicken. Die App nimmt Mikrofon + System-Audio
    parallel auf.
-3. **Stoppen** -> Audio wird als Stereo-WAV vorbereitet (links Mikrofon,
-   rechts System).
+3. **Stoppen** -> Audio wird als WAV unter `aufnahmen/` im Ausgabe-Verzeichnis
+   gespeichert und fuer die Transkription vorbereitet.
 4. **Transkribieren** klicken. Stages: Audio -> Upload -> Deepgram -> Speichern.
-5. **Sprecher zuordnen**: echte Namen eintragen. Die eigene Stimme bleibt
-   als „Ich” markiert.
+5. **Sprecher zuordnen**: echte Namen eintragen. Deepgram-Diarisierung wird
+   kanalbewusst uebernommen, damit Sprecher nicht zusammenfallen.
 6. Das Transkript landet unter `transkripte/` im Ausgabe-Verzeichnis.
    Format ist Cowork-kompatibel. Wenn Untertitel aktiviert sind, wird daneben
    eine gleichnamige `.srt`-Datei fuer Video-Player und Video-Editoren erzeugt.
