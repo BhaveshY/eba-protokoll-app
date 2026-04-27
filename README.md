@@ -3,7 +3,8 @@
 Electron-basierte Desktop-App zum Aufnehmen, Transkribieren und
 Protokollieren von Meetings. Transkription via Deepgram (Nova-3,
 mehrsprachig, Diarisierung). Exportformat bleibt Cowork-kompatibel:
-`[HH:MM:SS] Sprechername: Text`.
+`[HH:MM:SS] Sprechername: Text`. Optional erzeugt die App daneben eine
+synchronisierte `.srt`-Untertiteldatei fuer Video-Workflows.
 
 
 ## End-User Installation
@@ -51,7 +52,8 @@ in den Einstellungen auswählen.
 5. **Sprecher zuordnen**: echte Namen eintragen. Die eigene Stimme bleibt
    als „Ich” markiert.
 6. Das Transkript landet unter `transkripte/` im Ausgabe-Verzeichnis.
-   Format ist Cowork-kompatibel.
+   Format ist Cowork-kompatibel. Wenn Untertitel aktiviert sind, wird daneben
+   eine gleichnamige `.srt`-Datei fuer Video-Player und Video-Editoren erzeugt.
 
 ### Weitere Funktionen
 

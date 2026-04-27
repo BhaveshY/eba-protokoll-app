@@ -110,13 +110,16 @@ async function listTranscripts(base: string, limit = 8): Promise<RecentTranscrip
   const items: RecentTranscript[] = [];
   for (const name of entries) {
     if (!name.endsWith(".txt")) continue;
+    if (name.endsWith(".summary.txt")) continue;
     const full = path.join(folder, name);
     try {
       const stat = await fsp.stat(full);
       if (!stat.isFile()) continue;
+      const subtitlePath = await matchingSubtitlePath(folder, name);
       items.push({
         name,
         path: full,
+        ...(subtitlePath ? { subtitlePath } : {}),
         size: stat.size,
         mtime: stat.mtimeMs,
       });
@@ -126,6 +129,20 @@ async function listTranscripts(base: string, limit = 8): Promise<RecentTranscrip
   }
   items.sort((a, b) => b.mtime - a.mtime);
   return items.slice(0, limit);
+}
+
+async function matchingSubtitlePath(
+  folder: string,
+  transcriptName: string
+): Promise<string | null> {
+  const subtitleName = transcriptName.replace(/\.txt$/, ".srt");
+  const full = path.join(folder, subtitleName);
+  try {
+    const stat = await fsp.stat(full);
+    return stat.isFile() ? full : null;
+  } catch {
+    return null;
+  }
 }
 
 // --- keyterms -----------------------------------------------------------
@@ -227,6 +244,10 @@ function sanitizeConfig(input: Partial<AppConfig>): AppConfig {
     filterFillers: readBoolean(input.filterFillers, DEFAULT_CONFIG.filterFillers),
     paragraphs: readBoolean(input.paragraphs, DEFAULT_CONFIG.paragraphs),
     summarize: readBoolean(input.summarize, DEFAULT_CONFIG.summarize),
+    generateSubtitles: readBoolean(
+      input.generateSubtitles,
+      DEFAULT_CONFIG.generateSubtitles
+    ),
   };
 }
 

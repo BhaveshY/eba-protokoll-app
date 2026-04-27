@@ -56,6 +56,7 @@ export function RecentList({
                   </span>
                   <span className="block text-[11px] text-fg-subtle">
                     {formatDate(item.mtime, locale)} · {humanSize(item.size)}
+                    {item.subtitlePath ? ` · ${t("recent.hasSubtitles")}` : ""}
                   </span>
                 </span>
               </button>

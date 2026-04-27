@@ -9,7 +9,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { TranscriptReviewPanel } from "./components/TranscriptReviewPanel";
 import { Toast } from "./components/ui/Toast";
 import { I18nProvider, useT } from "./lib/i18n";
-import { formatTranscript, sampleQuotes } from "./lib/transcript";
+import { formatSubRip, formatTranscript, sampleQuotes } from "./lib/transcript";
 import type { Segment } from "./lib/types";
 import { useAppStore } from "./state/useAppStore";
 import { useTranscription } from "./state/useTranscription";
@@ -47,6 +47,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
   const [reviewState, setReviewState] = useState<{
     segments: Segment[];
     target: string;
+    subtitleTarget: string;
   } | null>(null);
   const onboardedRef = useRef(false);
   const handledTranscriptRef = useRef<string>("");
@@ -91,6 +92,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
         setReviewState({
           segments: txState.segments,
           target: txState.transcriptPath,
+          subtitleTarget: txState.subtitlePath,
         });
       }
       void refreshRecent();
@@ -105,6 +107,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
     txState.stage,
     txState.segments,
     txState.transcriptPath,
+    txState.subtitlePath,
     refreshRecent,
     notify,
     t,
@@ -170,6 +173,12 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
       try {
         const text = formatTranscript(reviewState.segments, names);
         await window.eba.fs.writeTranscript(reviewState.target, text);
+        if (reviewState.subtitleTarget) {
+          await window.eba.fs.writeTranscript(
+            reviewState.subtitleTarget,
+            formatSubRip(reviewState.segments, names)
+          );
+        }
         await refreshRecent();
         notify("success", t("notify.namesUpdated"));
       } catch (err) {

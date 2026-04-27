@@ -17,12 +17,24 @@ export interface SpeakerReviewItem {
   samples: string[];
 }
 
+const SUBRIP_NEWLINE = "\r\n";
+
 export function formatTimestamp(seconds: number): string {
   const total = Math.floor(seconds);
   const hh = String(Math.floor(total / 3600)).padStart(2, "0");
   const mm = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
   const ss = String(total % 60).padStart(2, "0");
   return `${hh}:${mm}:${ss}`;
+}
+
+export function formatSubRipTimestamp(seconds: number): string {
+  const totalMs = Math.max(0, Math.round(seconds * 1000));
+  const ms = String(totalMs % 1000).padStart(3, "0");
+  const totalSec = Math.floor(totalMs / 1000);
+  const hh = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+  const ss = String(totalSec % 60).padStart(2, "0");
+  return `${hh}:${mm}:${ss},${ms}`;
 }
 
 /**
@@ -40,6 +52,112 @@ export function formatTranscript(
       return `[${formatTimestamp(s.start)}] ${label}: ${s.text}`;
     })
     .join("\n");
+}
+
+/**
+ * Standards-compliant SubRip subtitles for video sidecars.
+ * Times use Deepgram utterance boundaries at millisecond precision.
+ */
+export function formatSubRip(
+  segments: Segment[],
+  names: Record<string, string>
+): string {
+  const ordered = segments
+    .filter((s) => s.text.trim())
+    .map((s) => ({
+      ...s,
+      start: cleanTime(s.start),
+      end: cleanTime(s.end),
+    }))
+    .sort((a, b) => a.start - b.start);
+
+  const cues = ordered.flatMap((segment, i) => {
+    const text = cueText(segment, names);
+    if (!text) return [];
+
+    const nextStart = ordered[i + 1]?.start;
+    const start = segment.start;
+    const fallbackEnd = start + fallbackCueDuration(segment.text);
+    let end = segment.end > start ? segment.end : fallbackEnd;
+
+    if (
+      typeof nextStart === "number" &&
+      Number.isFinite(nextStart) &&
+      nextStart > start &&
+      end > nextStart
+    ) {
+      end = nextStart;
+    }
+    if (end <= start) {
+      const hasUsableNextStart =
+        typeof nextStart === "number" &&
+        Number.isFinite(nextStart) &&
+        nextStart > start;
+      end = hasUsableNextStart
+        ? nextStart
+        : start + 0.5;
+    }
+
+    return [{
+      start,
+      end,
+      text,
+    }];
+  });
+
+  if (!cues.length) return "";
+
+  return cues
+    .map((cue, i) =>
+      [
+        String(i + 1),
+        `${formatSubRipTimestamp(cue.start)} --> ${formatSubRipTimestamp(cue.end)}`,
+        ...wrapCueText(cue.text),
+      ].join(SUBRIP_NEWLINE)
+    )
+    .join(`${SUBRIP_NEWLINE}${SUBRIP_NEWLINE}`) + SUBRIP_NEWLINE;
+}
+
+function cleanTime(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+function fallbackCueDuration(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.min(7, Math.max(1.5, words * 0.35));
+}
+
+function cueText(segment: Segment, names: Record<string, string>): string {
+  const text = normalizeCueLine(segment.text);
+  if (!text) return "";
+  const label = normalizeCueLine(names[segment.speaker] ?? segment.speaker);
+  return label ? `${label}: ${text}` : text;
+}
+
+function normalizeCueLine(value: string): string {
+  return value.replace(/\r\n|\r|\n/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function wrapCueText(text: string, maxLineLength = 42): string[] {
+  const words = text.split(" ");
+  const lines: string[] = [];
+  let line = "";
+
+  for (const word of words) {
+    if (!line) {
+      line = word;
+      continue;
+    }
+    if (`${line} ${word}`.length <= maxLineLength) {
+      line += ` ${word}`;
+      continue;
+    }
+    lines.push(line);
+    line = word;
+  }
+
+  if (line) lines.push(line);
+  return lines.length ? lines : [text];
 }
 
 function utteranceSpeakerLabel(

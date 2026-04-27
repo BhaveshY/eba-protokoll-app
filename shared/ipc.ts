@@ -19,6 +19,7 @@ export interface AppConfig {
   filterFillers: boolean;    // drop "um", "ah", "ähm" etc
   paragraphs: boolean;       // break transcript into paragraphs
   summarize: boolean;        // generate a short summary sidecar
+  generateSubtitles: boolean; // generate a SubRip .srt sidecar
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -32,11 +33,13 @@ export const DEFAULT_CONFIG: AppConfig = {
   filterFillers: false,
   paragraphs: true,
   summarize: false,
+  generateSubtitles: true,
 };
 
 export interface RecentTranscript {
   name: string;
   path: string;
+  subtitlePath?: string;
   size: number;
   mtime: number;
 }

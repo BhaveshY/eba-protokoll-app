@@ -1,6 +1,11 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { transcribe, TranscriptionCancelled, TranscriptionError } from "../lib/deepgram";
-import { formatTranscript, responseToSegments, safeProject } from "../lib/transcript";
+import {
+  formatSubRip,
+  formatTranscript,
+  responseToSegments,
+  safeProject,
+} from "../lib/transcript";
 import type { Segment, TranscribeStage } from "../lib/types";
 import type { AppConfig } from "@shared/ipc";
 
@@ -11,6 +16,7 @@ export interface TranscriptionState {
   error: string | null;
   segments: Segment[];
   transcriptPath: string;
+  subtitlePath: string;
 }
 
 export interface StartArgs {
@@ -31,6 +37,7 @@ export function useTranscription() {
     error: null,
     segments: [],
     transcriptPath: "",
+    subtitlePath: "",
   });
 
   const abortRef = useRef<AbortController | null>(null);
@@ -51,6 +58,7 @@ export function useTranscription() {
         error: null,
         segments: [],
         transcriptPath: "",
+        subtitlePath: "",
       });
 
       try {
@@ -101,6 +109,19 @@ export function useTranscription() {
         const text = formatTranscript(segments, {});
         await window.eba.fs.writeTranscript(outPath, text);
 
+        let subtitlePath = "";
+        if (args.config.generateSubtitles) {
+          setState((s) => ({ ...s, status: "Untertitel speichern" }));
+          subtitlePath = await window.eba.fs.joinTranscriptPath(
+            args.config.outputDir,
+            `${stem}.srt`
+          );
+          await window.eba.fs.writeTranscript(
+            subtitlePath,
+            formatSubRip(segments, {})
+          );
+        }
+
         // Sidecar summary if Deepgram returned one.
         const summary =
           response.results?.summary?.short ||
@@ -116,11 +137,14 @@ export function useTranscription() {
 
         setState({
           stage: "done",
-          status: `Gespeichert: ${outPath}`,
+          status: subtitlePath
+            ? `Gespeichert: ${outPath} + SRT`
+            : `Gespeichert: ${outPath}`,
           uploadPct: 100,
           error: null,
           segments,
           transcriptPath: outPath,
+          subtitlePath,
         });
       } catch (err) {
         if (err instanceof TranscriptionCancelled) {
@@ -160,6 +184,7 @@ export function useTranscription() {
       error: null,
       segments: [],
       transcriptPath: "",
+      subtitlePath: "",
     });
   }, []);
 

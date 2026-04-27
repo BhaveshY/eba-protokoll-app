@@ -102,6 +102,7 @@ const de = {
   "recent.title": "Letzte Transkripte",
   "recent.empty": "Noch keine Transkripte.",
   "recent.reveal": "Im Ordner zeigen",
+  "recent.hasSubtitles": "SRT-Untertitel",
 
   // Settings panel
   "settings.title": "Einstellungen",
@@ -146,6 +147,9 @@ const de = {
   "settings.intelligence.summarize": "Zusammenfassung erzeugen",
   "settings.intelligence.summarize.hint":
     "Speichert eine kurze Zusammenfassung als .summary.txt neben dem Transkript.",
+  "settings.intelligence.generateSubtitles": "SRT-Untertitel erzeugen",
+  "settings.intelligence.generateSubtitles.hint":
+    "Speichert eine synchronisierte .srt-Datei neben dem Transkript.",
   "settings.transcriptLanguage.multi": "Mehrsprachig (empfohlen)",
   "settings.transcriptLanguage.de": "Deutsch",
   "settings.transcriptLanguage.en": "Englisch",
@@ -310,6 +314,7 @@ const en: Dict = {
   "recent.title": "Recent transcripts",
   "recent.empty": "No transcripts yet.",
   "recent.reveal": "Show in folder",
+  "recent.hasSubtitles": "SRT subtitles",
 
   // Settings panel
   "settings.title": "Settings",
@@ -354,6 +359,9 @@ const en: Dict = {
   "settings.intelligence.summarize": "Generate summary",
   "settings.intelligence.summarize.hint":
     "Saves a short summary as .summary.txt alongside the transcript.",
+  "settings.intelligence.generateSubtitles": "Generate SRT subtitles",
+  "settings.intelligence.generateSubtitles.hint":
+    "Saves a synced .srt file alongside the transcript.",
   "settings.transcriptLanguage.multi": "Multilingual (recommended)",
   "settings.transcriptLanguage.de": "German",
   "settings.transcriptLanguage.en": "English",

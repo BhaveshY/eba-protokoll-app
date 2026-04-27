@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   cleanSpeakerNames,
   collectSpeakerReviewItems,
+  formatSubRip,
+  formatSubRipTimestamp,
   formatTimestamp,
   formatTranscript,
   humanSize,
@@ -15,6 +17,18 @@ describe("formatTimestamp", () => {
     expect(formatTimestamp(0)).toBe("00:00:00");
     expect(formatTimestamp(65)).toBe("00:01:05");
     expect(formatTimestamp(3661)).toBe("01:01:01");
+  });
+});
+
+describe("formatSubRipTimestamp", () => {
+  it("formats milliseconds for SRT", () => {
+    expect(formatSubRipTimestamp(0)).toBe("00:00:00,000");
+    expect(formatSubRipTimestamp(65.432)).toBe("00:01:05,432");
+    expect(formatSubRipTimestamp(3661.9996)).toBe("01:01:02,000");
+  });
+
+  it("clamps negative times to zero", () => {
+    expect(formatSubRipTimestamp(-1)).toBe("00:00:00,000");
   });
 });
 
@@ -94,6 +108,51 @@ describe("formatTranscript", () => {
     expect(formatTranscript(segs, { "Sprecher 1": "Herr Mueller" })).toBe(
       "[00:00:00] Herr Mueller: Hallo."
     );
+  });
+});
+
+describe("formatSubRip", () => {
+  it("emits numbered SRT cues with millisecond timing", () => {
+    const segs = [
+      { start: 0, end: 1.235, speaker: "Ich", text: "Moin." },
+      { start: 65.5, end: 67.01, speaker: "Sprecher 1", text: "Hallo." },
+    ];
+    expect(formatSubRip(segs, {})).toBe(
+      "1\r\n" +
+        "00:00:00,000 --> 00:00:01,235\r\n" +
+        "Ich: Moin.\r\n\r\n" +
+        "2\r\n" +
+        "00:01:05,500 --> 00:01:07,010\r\n" +
+        "Sprecher 1: Hallo.\r\n"
+    );
+  });
+
+  it("substitutes speaker names", () => {
+    const segs = [{ start: 0, end: 1, speaker: "Sprecher 1", text: "Hallo." }];
+    expect(formatSubRip(segs, { "Sprecher 1": "Anna" })).toContain(
+      "Anna: Hallo."
+    );
+  });
+
+  it("clamps overlapping cue ends to the next cue start", () => {
+    const out = formatSubRip([
+      { start: 0, end: 5, speaker: "Ich", text: "First." },
+      { start: 2, end: 3, speaker: "Sprecher 1", text: "Second." },
+    ], {});
+    expect(out).toContain("00:00:00,000 --> 00:00:02,000");
+  });
+
+  it("uses a fallback duration for missing end times", () => {
+    const out = formatSubRip([
+      { start: 4, end: 0, speaker: "Ich", text: "Fallback duration." },
+    ], {});
+    expect(out).toContain("00:00:04,000 --> 00:00:05,500");
+  });
+
+  it("drops empty subtitle text", () => {
+    expect(formatSubRip([
+      { start: 0, end: 1, speaker: "Ich", text: "  " },
+    ], {})).toBe("");
   });
 });
 
