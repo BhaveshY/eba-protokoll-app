@@ -3,7 +3,11 @@ import type { AppConfig } from "@shared/ipc";
 import clsx from "../lib/clsx";
 import { findDeviceByHint, listInputDevices } from "../lib/devices";
 import { useT, type TranslateFn } from "../lib/i18n";
-import { MeetingRecorder, type RecordingResult } from "../lib/recorder";
+import {
+  MeetingRecorder,
+  type RecorderLevels,
+  type RecordingResult,
+} from "../lib/recorder";
 import { humanSize, safeProject } from "../lib/transcript";
 import { Card } from "./ui/Card";
 import { RecordingDot } from "./ui/RecordingDot";
@@ -26,7 +30,9 @@ export function RecordingPanel({
   onProjectNameChange,
   loaded,
   disabled,
+  transcribing,
   onLoaded,
+  onTranscribeAudio,
   onLog,
 }: {
   config: AppConfig;
@@ -34,7 +40,9 @@ export function RecordingPanel({
   onProjectNameChange: (value: string) => void;
   loaded: LoadedAudio | null;
   disabled?: boolean;
+  transcribing?: boolean;
   onLoaded: (audio: LoadedAudio) => void;
+  onTranscribeAudio?: (audio: LoadedAudio) => Promise<boolean> | boolean;
   onLog: (level: "info" | "warn" | "error", msg: string) => void;
 }) {
   const t = useT();
@@ -42,6 +50,11 @@ export function RecordingPanel({
   const [elapsed, setElapsed] = useState(0);
   const [statusText, setStatusText] = useState<string>(() => t("record.status.ready"));
   const [dropActive, setDropActive] = useState(false);
+  const [levels, setLevels] = useState<RecorderLevels>({
+    mic: 0,
+    system: 0,
+    usedSystemAudio: false,
+  });
   const recorderRef = useRef<MeetingRecorder | null>(null);
   const timerRef = useRef<number | null>(null);
   const dragDepthRef = useRef(0);
@@ -95,13 +108,14 @@ export function RecordingPanel({
   const startRecording = useCallback(async () => {
     if (disabled) return;
     setStatusText(t("record.status.opening"));
+    setLevels({ mic: 0, system: 0, usedSystemAudio: false });
     let rec: MeetingRecorder | null = null;
     try {
       const devices = config.systemAudioDevice ? await listInputDevices() : [];
       const systemDev = config.systemAudioDevice
         ? findDeviceByHint(devices, config.systemAudioDevice)?.deviceId
         : undefined;
-      rec = new MeetingRecorder({ systemDeviceId: systemDev });
+      rec = new MeetingRecorder({ systemDeviceId: systemDev, onLevel: setLevels });
       await rec.start();
       recorderRef.current = rec;
       setMode("recording");
@@ -119,6 +133,7 @@ export function RecordingPanel({
       recorderRef.current = null;
       onLog("error", `record start: ${(err as Error).message}`);
       setStatusText(t("record.status.micError", { msg: (err as Error).message }));
+      setLevels({ mic: 0, system: 0, usedSystemAudio: false });
       setMode("idle");
     }
   }, [config.systemAudioDevice, disabled, onLog, t]);
@@ -132,7 +147,7 @@ export function RecordingPanel({
       const result: RecordingResult = await rec.stop();
       recorderRef.current = null;
       setMode("stopped");
-      const filename = recordingFilename(projectName);
+      const filename = recordingFilename(projectName, result.extension);
       let recordingPath = "";
       let recordingSaveError = "";
       try {
@@ -145,7 +160,7 @@ export function RecordingPanel({
         recordingSaveError = (err as Error).message;
         onLog("error", `record save: ${recordingSaveError}`);
       }
-      onLoaded({
+      const audio: LoadedAudio = {
         blob: result.stereo,
         filename,
         isRecordedStereo: result.usedSystemAudio,
@@ -153,15 +168,28 @@ export function RecordingPanel({
         source: "recorded",
         ...(recordingPath ? { recordingPath } : {}),
         ...(recordingSaveError ? { recordingSaveError } : {}),
-      });
+      };
+      onLoaded(audio);
+      setLevels({ mic: 0, system: 0, usedSystemAudio: false });
+      if (onTranscribeAudio) {
+        setStatusText(t("record.status.autoTranscribing"));
+        try {
+          const started = await onTranscribeAudio(audio);
+          if (!started) setStatusText(statusForLoadedAudio(audio, t));
+        } catch (err) {
+          onLog("error", `auto transcribe: ${(err as Error).message}`);
+          setStatusText(statusForLoadedAudio(audio, t));
+        }
+      }
     } catch (err) {
       rec.abort();
       recorderRef.current = null;
       setMode("idle");
+      setLevels({ mic: 0, system: 0, usedSystemAudio: false });
       onLog("error", `record stop: ${(err as Error).message}`);
       setStatusText(t("record.status.stopError", { msg: (err as Error).message }));
     }
-  }, [config.outputDir, onLoaded, onLog, projectName, t]);
+  }, [config.outputDir, onLoaded, onLog, onTranscribeAudio, projectName, t]);
 
   const importFile = useCallback(async () => {
     if (disabled) return;
@@ -243,13 +271,14 @@ export function RecordingPanel({
   const summary = loaded ? describeLoadedAudio(loaded, t) : null;
 
   return (
-    <Card
-      className={clsx(
-        "transition-colors duration-150",
-        dropActive && "border-fg/40 bg-fg/[0.02]"
-      )}
-    >
-      <div className="flex flex-col gap-6">
+    <>
+      <Card
+        className={clsx(
+          "transition-colors duration-150",
+          dropActive && "border-fg/40 bg-fg/[0.02]"
+        )}
+      >
+        <div className="flex flex-col gap-6">
         {/* Project input */}
         <div className="grid gap-1.5">
           <label
@@ -293,26 +322,41 @@ export function RecordingPanel({
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex flex-col gap-2">
-          <button
-            type="button"
-            className={clsx(isRecording ? "btn-danger" : "btn-primary", "py-2.5")}
-            disabled={disabled}
-            onClick={isRecording ? stopRecording : startRecording}
-          >
-            {isRecording ? t("record.action.stop") : t("record.action.start")}
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            onClick={importFile}
-            disabled={disabled || isRecording}
-            title={t("record.import.title")}
-          >
-            {t("record.action.import")}
-          </button>
-        </div>
+          {/* Actions */}
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              className={clsx(isRecording ? "btn-danger" : "btn-primary", "py-2.5")}
+              disabled={disabled && !isRecording}
+              onClick={isRecording ? stopRecording : startRecording}
+            >
+              {transcribing
+                ? t("app.action.transcribing")
+                : isRecording
+                  ? t("record.action.stop")
+                  : t("record.action.startWorkflow")}
+            </button>
+            {loaded && !isRecording && !transcribing && onTranscribeAudio && (
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => void onTranscribeAudio(loaded)}
+              >
+                {loaded.source === "imported"
+                  ? t("record.action.transcribeFile")
+                  : t("record.action.transcribeRecording")}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={importFile}
+              disabled={disabled || isRecording}
+              title={t("record.import.title")}
+            >
+              {t("record.action.import")}
+            </button>
+          </div>
 
         {/* Dropzone */}
         <div
@@ -335,8 +379,113 @@ export function RecordingPanel({
             {summary}
           </p>
         )}
+        </div>
+      </Card>
+      {isRecording && (
+        <RecordingWidget
+          elapsed={elapsed}
+          levels={levels}
+          statusText={statusText}
+          onStop={stopRecording}
+        />
+      )}
+    </>
+  );
+}
+
+function RecordingWidget({
+  elapsed,
+  levels,
+  statusText,
+  onStop,
+}: {
+  elapsed: number;
+  levels: RecorderLevels;
+  statusText: string;
+  onStop: () => void;
+}) {
+  const t = useT();
+  return (
+    <div className="fixed bottom-4 left-1/2 z-40 w-[min(92vw,520px)] -translate-x-1/2 rounded-lg border border-line bg-bg-card px-3 py-2.5 shadow-cardHover">
+      <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger">
+            <RecordingDot active />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[12px] font-semibold text-fg">
+                {t("record.widget.title")}
+              </span>
+              <span className="font-mono text-[12px] tabular-nums text-fg-muted">
+                {fmtDuration(elapsed)}
+              </span>
+            </div>
+            <p className="truncate text-[11px] text-fg-subtle">{statusText}</p>
+          </div>
+        </div>
+
+        <div
+          className={clsx(
+            "hidden min-w-[150px] gap-2 sm:grid",
+            levels.usedSystemAudio ? "grid-cols-2" : "grid-cols-1"
+          )}
+        >
+          <LevelMeter label={t("record.widget.mic")} level={levels.mic} />
+          {levels.usedSystemAudio && (
+            <LevelMeter
+              label={t("record.widget.system")}
+              level={levels.system}
+            />
+          )}
+        </div>
+
+        <button
+          type="button"
+          className="btn-danger shrink-0 px-3 py-2 text-[12px]"
+          onClick={onStop}
+          aria-label={t("record.widget.stop")}
+        >
+          {t("record.widget.stop")}
+        </button>
       </div>
-    </Card>
+      <div
+        className={clsx(
+          "mt-2 grid gap-2 sm:hidden",
+          levels.usedSystemAudio ? "grid-cols-2" : "grid-cols-1"
+        )}
+      >
+        <LevelMeter label={t("record.widget.mic")} level={levels.mic} />
+        {levels.usedSystemAudio && (
+          <LevelMeter label={t("record.widget.system")} level={levels.system} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LevelMeter({ label, level }: { label: string; level: number }) {
+  const activeBars = Math.round(Math.max(0, Math.min(1, level)) * 14);
+  return (
+    <div className="min-w-0">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="truncate text-[10px] font-medium text-fg-muted">
+          {label}
+        </span>
+      </div>
+      <div className="flex h-7 items-end gap-0.5 overflow-hidden rounded-md bg-bg-subtle px-1.5 py-1">
+        {Array.from({ length: 14 }, (_, i) => (
+          <span
+            key={i}
+            className={clsx(
+              "w-1 flex-1 rounded-sm transition-colors duration-100",
+              i < activeBars ? "bg-danger" : "bg-line"
+            )}
+            style={{ height: `${5 + (i % 7) * 2}px` }}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -374,9 +523,10 @@ function statusForLoadedAudio(audio: LoadedAudio, t: TranslateFn): string {
   return t("record.status.readyToTranscribeRec");
 }
 
-function recordingFilename(projectName: string): string {
+function recordingFilename(projectName: string, extension: string): string {
   const project = safeProject(projectName.trim() || "Besprechung").trim();
-  return `${project || "Besprechung"}_${timestampForFile()}.wav`;
+  const ext = extension.replace(/^\.+/, "").replace(/[^a-z0-9]/gi, "") || "webm";
+  return `${project || "Besprechung"}_${timestampForFile()}.${ext}`;
 }
 
 function timestampForFile(): string {

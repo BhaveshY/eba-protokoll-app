@@ -17,8 +17,8 @@ const api: EbaApi = {
   fs: {
     ensureOutputDirs: (base: string) =>
       ipcRenderer.invoke("fs:ensureOutputDirs", base),
-    writeTranscript: (p: string, text: string) =>
-      ipcRenderer.invoke("fs:writeTranscript", p, text),
+    saveTranscriptFiles: (base, files) =>
+      ipcRenderer.invoke("fs:saveTranscriptFiles", base, files),
     saveRecording: (base: string, filename: string, bytes: ArrayBuffer) =>
       ipcRenderer.invoke("fs:saveRecording", base, filename, bytes),
     listTranscripts: (base: string, limit?: number) =>

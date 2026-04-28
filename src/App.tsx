@@ -119,27 +119,42 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
     }
   }, [txState.stage, txState.error, notify]);
 
-  const startTranscription = useCallback(async () => {
-    if (!loaded || !config) return;
+  const transcribeAudio = useCallback(async (audio: LoadedAudio) => {
+    if (transcribing || !config) return false;
     if (!apiKey) {
       notify("warn", t("notify.apiKeyMissing"));
       setSettingsOpen(true);
-      return;
+      return false;
     }
-    const keyterms = await window.eba.keyterms.load(
-      config.keytermProfile || "default"
-    );
-    const project = projectName.trim() || deriveProjectName(loaded.filename);
-    await startTx({
-      apiKey,
-      config,
-      audioBlob: loaded.blob,
-      filename: loaded.filename,
-      isRecordedStereo: loaded.isRecordedStereo,
-      keyterms,
-      project,
-    });
-  }, [loaded, config, apiKey, notify, projectName, startTx, t]);
+    try {
+      const keyterms = await window.eba.keyterms.load(
+        config.keytermProfile || "default"
+      );
+      const project = projectName.trim() || deriveProjectName(audio.filename);
+      setLoaded(audio);
+      void startTx({
+        apiKey,
+        config,
+        audioBlob: audio.blob,
+        filename: audio.filename,
+        isRecordedStereo: audio.isRecordedStereo,
+        keyterms,
+        project,
+      });
+      return true;
+    } catch (err) {
+      notify(
+        "error",
+        t("notify.transcriptionStartFailed", { msg: (err as Error).message })
+      );
+      return false;
+    }
+  }, [apiKey, config, notify, projectName, startTx, t, transcribing]);
+
+  const startTranscription = useCallback(async () => {
+    if (!loaded) return;
+    await transcribeAudio(loaded);
+  }, [loaded, transcribeAudio]);
 
   const saveSettings = useCallback(
     async ({
@@ -166,19 +181,23 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
 
   const saveReview = useCallback(
     async (names: Record<string, string>) => {
-      if (!reviewState) {
+      if (!reviewState || !config) {
         setReviewState(null);
         return;
       }
       try {
         const text = formatTranscript(reviewState.segments, names);
-        await window.eba.fs.writeTranscript(reviewState.target, text);
+        const files = [
+          { kind: "transcript", path: reviewState.target, text },
+        ];
         if (reviewState.subtitleTarget) {
-          await window.eba.fs.writeTranscript(
-            reviewState.subtitleTarget,
-            formatSubRip(reviewState.segments, names)
-          );
+          files.push({
+            kind: "subtitles",
+            path: reviewState.subtitleTarget,
+            text: formatSubRip(reviewState.segments, names),
+          });
         }
+        await window.eba.fs.saveTranscriptFiles(config.outputDir, files);
         await refreshRecent();
         notify("success", t("notify.namesUpdated"));
       } catch (err) {
@@ -187,7 +206,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
         setReviewState(null);
       }
     },
-    [reviewState, refreshRecent, notify, t]
+    [config, reviewState, refreshRecent, notify, t]
   );
 
   const openTranscript = useCallback(
@@ -294,32 +313,11 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
               onProjectNameChange={setProjectName}
               loaded={loaded}
               disabled={transcribing}
+              transcribing={transcribing}
               onLoaded={setLoaded}
+              onTranscribeAudio={transcribeAudio}
               onLog={(lvl, m) => window.eba.log(lvl, m)}
             />
-
-            <div className="flex flex-col gap-1.5">
-              <button
-                type="button"
-                className="btn-primary py-2.5"
-                disabled={!loaded || transcribing}
-                onClick={startTranscription}
-                title={t("app.action.transcribe.title")}
-              >
-                {transcribing
-                  ? t("app.action.transcribing")
-                  : t("app.action.transcribe")}
-              </button>
-              {loaded && !transcribing && (
-                <p className="px-1 text-[11.5px] text-fg-subtle">
-                  <span className="font-medium text-fg-muted">
-                    {t("app.loaded.label")}
-                  </span>{" "}
-                  <span className="font-mono">{loaded.filename}</span>
-                  {loaded.isRecordedStereo ? t("app.loaded.stereoSuffix") : ""}
-                </p>
-              )}
-            </div>
           </div>
 
           <div className="flex flex-col gap-4 md:col-span-2">
@@ -353,7 +351,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
               <kbd>Esc</kbd> {t("app.footer.cancel")}
             </span>
           </span>
-          <span className="text-fg-subtle ml-auto">v0.1.1</span>
+          <span className="text-fg-subtle ml-auto">v0.1.2</span>
         </div>
       </footer>
 

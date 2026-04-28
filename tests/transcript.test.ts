@@ -176,6 +176,90 @@ describe("responseToSegments", () => {
     expect(text).toContain("Guten Morgen");
     expect(text).toContain("reviewing costs");
   });
+
+  it("prefers channels over tied utterances for recorded stereo", () => {
+    const segs = responseToSegments({
+      results: {
+        utterances: [
+          { start: 0, end: 1, speaker: 0, transcript: "Local." },
+          { start: 1, end: 2, speaker: 0, transcript: "Remote." },
+        ],
+        channels: [
+          {
+            alternatives: [{
+              transcript: "Local.",
+              words: [
+                {
+                  start: 0,
+                  end: 1,
+                  word: "local",
+                  punctuated_word: "Local.",
+                  speaker: 0,
+                },
+              ],
+            }],
+          },
+          {
+            alternatives: [{
+              transcript: "Remote.",
+              words: [
+                {
+                  start: 1,
+                  end: 2,
+                  word: "remote",
+                  punctuated_word: "Remote.",
+                  speaker: 0,
+                },
+              ],
+            }],
+          },
+        ],
+      },
+    }, true);
+
+    expect(segs.map((s) => s.text)).toEqual(["Local.", "Remote."]);
+    expect(segs.map((s) => s.speaker)).toEqual(["Sprecher 1", "Sprecher 2"]);
+  });
+
+  it("keeps identical channel text when speaker metadata differs", () => {
+    const segs = responseToSegments({
+      results: {
+        channels: [
+          {
+            alternatives: [{
+              transcript: "Ja.",
+              words: [
+                {
+                  start: 0,
+                  end: 0.3,
+                  word: "ja",
+                  punctuated_word: "Ja.",
+                  speaker: 0,
+                },
+              ],
+            }],
+          },
+          {
+            alternatives: [{
+              transcript: "Ja.",
+              words: [
+                {
+                  start: 0,
+                  end: 0.3,
+                  word: "ja",
+                  punctuated_word: "Ja.",
+                  speaker: 1,
+                },
+              ],
+            }],
+          },
+        ],
+      },
+    }, true);
+
+    expect(segs).toHaveLength(2);
+    expect(segs.map((s) => s.speaker)).toEqual(["Sprecher 1", "Sprecher 2"]);
+  });
 });
 
 describe("formatTranscript", () => {

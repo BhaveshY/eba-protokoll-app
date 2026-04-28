@@ -44,6 +44,18 @@ export interface RecentTranscript {
   mtime: number;
 }
 
+export interface TranscriptFileRequest {
+  kind: string;
+  text: string;
+  filename?: string;
+  path?: string;
+}
+
+export interface TranscriptFileResult {
+  kind: string;
+  path: string;
+}
+
 export interface KeytermProfiles {
   profiles: Record<string, string[]>;
 }
@@ -66,7 +78,10 @@ export interface EbaApi {
   // Filesystem helpers
   fs: {
     ensureOutputDirs(base: string): Promise<void>;
-    writeTranscript(path: string, text: string): Promise<void>;
+    saveTranscriptFiles(
+      base: string,
+      files: TranscriptFileRequest[]
+    ): Promise<TranscriptFileResult[]>;
     saveRecording(base: string, filename: string, bytes: ArrayBuffer): Promise<string>;
     listTranscripts(base: string, limit?: number): Promise<RecentTranscript[]>;
     readFileAsBytes(path: string): Promise<ArrayBuffer>;

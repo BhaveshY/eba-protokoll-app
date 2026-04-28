@@ -113,24 +113,18 @@ export function useTranscription() {
         setState((s) => ({ ...s, stage: "save", status: "Transkript speichern" }));
 
         const stem = `${safeProject(args.project)}_${timestampForFile()}`;
-        const outPath = await window.eba.fs.joinTranscriptPath(
-          args.config.outputDir,
-          `${stem}.txt`
-        );
         const text = formatTranscript(segments, {});
-        await window.eba.fs.writeTranscript(outPath, text);
+        const files = [
+          { kind: "transcript", filename: `${stem}.txt`, text },
+        ];
 
-        let subtitlePath = "";
         if (args.config.generateSubtitles) {
           setState((s) => ({ ...s, status: "Untertitel speichern" }));
-          subtitlePath = await window.eba.fs.joinTranscriptPath(
-            args.config.outputDir,
-            `${stem}.srt`
-          );
-          await window.eba.fs.writeTranscript(
-            subtitlePath,
-            formatSubRip(segments, {})
-          );
+          files.push({
+            kind: "subtitles",
+            filename: `${stem}.srt`,
+            text: formatSubRip(segments, {}),
+          });
         }
 
         if (args.config.summarize) {
@@ -139,13 +133,22 @@ export function useTranscription() {
             extractDeepgramSummary(response)
           );
           if (summary.trim()) {
-            const summaryPath = await window.eba.fs.joinTranscriptPath(
-              args.config.outputDir,
-              `${stem}.summary.txt`
-            );
-            await window.eba.fs.writeTranscript(summaryPath, summary.trim() + "\n");
+            files.push({
+              kind: "summary",
+              filename: `${stem}.summary.txt`,
+              text: summary.trim() + "\n",
+            });
           }
         }
+
+        const saved = await window.eba.fs.saveTranscriptFiles(
+          args.config.outputDir,
+          files
+        );
+        const outPath =
+          saved.find((file) => file.kind === "transcript")?.path ?? "";
+        const subtitlePath =
+          saved.find((file) => file.kind === "subtitles")?.path ?? "";
 
         setState({
           stage: "done",

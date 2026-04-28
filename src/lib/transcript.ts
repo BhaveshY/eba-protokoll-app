@@ -201,6 +201,7 @@ export function responseToSegments(
 
   if (!utteranceSegments.length) return channelSegments;
   if (!channelSegments.length) return utteranceSegments;
+  if (isRecordedStereo) return channelSegments;
   if (isRicherTranscript(channelSegments, utteranceSegments)) {
     return channelSegments;
   }
@@ -232,18 +233,10 @@ function channelsToSegments(
 ): Segment[] {
   const channels = response.results?.channels ?? [];
   const segments: RawSegment[] = [];
-  const seenChannelTexts = new Set<string>();
 
   channels.forEach((channel, channelIndex) => {
     const alternative = firstUsableAlternative(channel.alternatives ?? []);
     if (!alternative) return;
-
-    const comparisonText = comparisonTextForAlternative(alternative);
-    if (comparisonText) {
-      const key = normalizeForComparison(comparisonText);
-      if (seenChannelTexts.has(key)) return;
-      seenChannelTexts.add(key);
-    }
 
     const wordSegments = wordsToSegments(
       alternative.words ?? [],
@@ -462,10 +455,6 @@ function cleanJoinedWords(words: string[]): string {
 
 function cleanSegmentText(value: string): string {
   return value.replace(/\s+/g, " ").trim();
-}
-
-function normalizeForComparison(value: string): string {
-  return cleanSegmentText(value).toLocaleLowerCase();
 }
 
 function safeSeconds(value: unknown, fallback = 0): number {

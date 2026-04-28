@@ -9,13 +9,32 @@ import {
 } from "electron";
 import * as path from "node:path";
 import * as fsp from "node:fs/promises";
-import type { AppConfig, KeytermProfiles, RecentTranscript } from "../shared/ipc";
+import type {
+  AppConfig,
+  KeytermProfiles,
+  RecentTranscript,
+  TranscriptFileRequest,
+  TranscriptFileResult,
+} from "../shared/ipc";
 import { DEFAULT_CONFIG } from "../shared/ipc";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
 const CONFIG_FILE = "config.json";
 const API_KEY_FILE = "deepgram.bin";
+const SUPPORTED_AUDIO_EXTENSIONS = new Set([
+  ".wav",
+  ".mp3",
+  ".m4a",
+  ".mp4",
+  ".mkv",
+  ".ogg",
+  ".flac",
+  ".webm",
+]);
+const TRANSCRIPT_EXTENSIONS = new Set([".txt", ".srt"]);
+const selectedAudioFiles = new Set<string>();
+const selectedDirectories = new Set<string>();
 
 // --- config --------------------------------------------------------------
 
@@ -136,11 +155,13 @@ async function saveRecording(
   filename: string,
   bytes: ArrayBuffer | ArrayBufferView
 ): Promise<string> {
-  if (!base.trim()) throw new Error("Ausgabe-Verzeichnis fehlt.");
-  const folder = path.join(base, "aufnahmen");
+  const outputDir = await assertConfiguredOutputBase(base);
+  const folder = path.join(outputDir, "aufnahmen");
   await fsp.mkdir(folder, { recursive: true });
+  assertPathInside(outputDir, folder);
   const safeName = safeArtifactFilename(filename, "aufnahme.wav");
   const target = await uniqueFilePath(folder, safeName);
+  assertPathInside(folder, target);
   await fsp.writeFile(target, bufferFromBytes(bytes));
   return target;
 }
@@ -157,6 +178,183 @@ function safeArtifactFilename(filename: string, fallback: string): string {
     .replace(/\s+/g, " ")
     .trim();
   return cleaned || fallback;
+}
+
+async function assertConfiguredOutputBase(base: string): Promise<string> {
+  if (!base.trim()) throw new Error("Ausgabe-Verzeichnis fehlt.");
+  const cfg = await readConfig();
+  const outputDir = path.resolve(cfg.outputDir);
+  if (path.resolve(base) !== outputDir) {
+    throw new Error("Ausgabe-Verzeichnis stimmt nicht mit der Konfiguration ueberein.");
+  }
+  return outputDir;
+}
+
+function assertPathInside(base: string, target: string): void {
+  const root = path.resolve(base);
+  const resolved = path.resolve(target);
+  const rel = path.relative(root, resolved);
+  if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) return;
+  throw new Error("Pfad liegt ausserhalb des erlaubten Ausgabe-Verzeichnisses.");
+}
+
+function transcriptFolder(base: string): string {
+  return path.join(base, "transkripte");
+}
+
+function outputPathAllowed(base: string, target: string): boolean {
+  const outputDir = path.resolve(base);
+  const resolved = path.resolve(target);
+  const rel = path.relative(outputDir, resolved);
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+function supportedAudioFile(p: string): boolean {
+  return SUPPORTED_AUDIO_EXTENSIONS.has(path.extname(p).toLowerCase());
+}
+
+async function readGrantedAudioFile(p: string): Promise<ArrayBuffer> {
+  const resolved = path.resolve(p);
+  if (!selectedAudioFiles.has(resolved) || !supportedAudioFile(resolved)) {
+    throw new Error("Audio-Datei wurde nicht ueber den Dateidialog freigegeben.");
+  }
+  const buf = await fsp.readFile(resolved);
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
+async function saveTranscriptFiles(
+  base: string,
+  files: TranscriptFileRequest[]
+): Promise<TranscriptFileResult[]> {
+  const outputDir = await assertConfiguredOutputBase(base);
+  const folder = transcriptFolder(outputDir);
+  await fsp.mkdir(folder, { recursive: true });
+
+  const writes = files.map((input) => {
+    const file = normalizeTranscriptFileRequest(input);
+    return {
+      kind: readTranscriptKind(file.kind),
+      path: resolveTranscriptTarget(folder, file),
+      text: String(file.text ?? ""),
+    };
+  });
+  if (!writes.length) return [];
+  ensureUniqueTargets(writes.map((file) => file.path));
+
+  await writeTextFilesAtomically(writes);
+  return writes.map(({ kind, path: filePath }) => ({ kind, path: filePath }));
+}
+
+function normalizeTranscriptFileRequest(input: unknown): TranscriptFileRequest {
+  if (!input || typeof input !== "object") {
+    throw new Error("Ungueltige Transkript-Datei.");
+  }
+  const candidate = input as Partial<TranscriptFileRequest>;
+  if (typeof candidate.text !== "string") {
+    throw new Error("Transkript-Inhalt fehlt.");
+  }
+  return {
+    kind: typeof candidate.kind === "string" ? candidate.kind : "file",
+    text: candidate.text,
+    ...(typeof candidate.filename === "string"
+      ? { filename: candidate.filename }
+      : {}),
+    ...(typeof candidate.path === "string" ? { path: candidate.path } : {}),
+  };
+}
+
+function readTranscriptKind(kind: unknown): string {
+  const text = typeof kind === "string" ? kind.trim() : "";
+  return text || "file";
+}
+
+function resolveTranscriptTarget(
+  folder: string,
+  file: TranscriptFileRequest
+): string {
+  if (file.path) {
+    const target = path.resolve(file.path);
+    assertPathInside(folder, target);
+    assertTranscriptExtension(target);
+    return target;
+  }
+
+  const filename = safeArtifactFilename(file.filename ?? "", "transkript.txt");
+  const target = path.join(folder, filename);
+  assertPathInside(folder, target);
+  assertTranscriptExtension(target);
+  return target;
+}
+
+function assertTranscriptExtension(p: string): void {
+  if (!TRANSCRIPT_EXTENSIONS.has(path.extname(p).toLowerCase())) {
+    throw new Error("Nur .txt- und .srt-Dateien duerfen als Transkript gespeichert werden.");
+  }
+}
+
+function ensureUniqueTargets(paths: string[]): void {
+  const seen = new Set<string>();
+  for (const p of paths) {
+    const key = path.resolve(p);
+    if (seen.has(key)) {
+      throw new Error("Transkript-Zieldatei wurde doppelt angegeben.");
+    }
+    seen.add(key);
+  }
+}
+
+async function writeTextFilesAtomically(
+  files: Array<{ path: string; text: string }>
+): Promise<void> {
+  const prepared: Array<{ target: string; temp: string }> = [];
+  const backups: Array<{ target: string; backup: string }> = [];
+  const token = `${process.pid}-${Date.now()}-${Math.random()
+    .toString(16)
+    .slice(2)}`;
+
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const target = files[i].path;
+      const temp = path.join(
+        path.dirname(target),
+        `.${path.basename(target)}.${token}.${i}.tmp`
+      );
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.writeFile(temp, files[i].text, "utf8");
+      prepared.push({ target, temp });
+    }
+
+    for (const item of prepared) {
+      const backup = `${item.target}.${token}.bak`;
+      try {
+        await fsp.rename(item.target, backup);
+        backups.push({ target: item.target, backup });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
+    }
+
+    for (const item of prepared) {
+      await fsp.rename(item.temp, item.target);
+    }
+
+    await Promise.all(
+      backups.map((item) => fsp.rm(item.backup, { force: true }).catch(() => {}))
+    );
+  } catch (err) {
+    await Promise.all(
+      prepared.map((item) => fsp.rm(item.temp, { force: true }).catch(() => {}))
+    );
+    await Promise.all(
+      prepared.map((item) => fsp.rm(item.target, { force: true }).catch(() => {}))
+    );
+    await Promise.all(
+      backups.map(async (item) => {
+        await fsp.rename(item.backup, item.target).catch(() => {});
+      })
+    );
+    throw err;
+  }
 }
 
 async function uniqueFilePath(folder: string, filename: string): Promise<string> {
@@ -317,15 +515,14 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("fs:ensureOutputDirs", async (_evt, base: string) => {
-    await ensureOutputDirs(base);
+    const outputDir = await assertConfiguredOutputBase(base);
+    await ensureOutputDirs(outputDir);
   });
 
   ipcMain.handle(
-    "fs:writeTranscript",
-    async (_evt, p: string, text: string) => {
-      await fsp.mkdir(path.dirname(p), { recursive: true });
-      await fsp.writeFile(p, text, "utf8");
-    }
+    "fs:saveTranscriptFiles",
+    async (_evt, base: string, files: TranscriptFileRequest[]) =>
+      await saveTranscriptFiles(base, Array.isArray(files) ? files : [])
   );
 
   ipcMain.handle(
@@ -336,23 +533,36 @@ function registerIpc(): void {
 
   ipcMain.handle(
     "fs:listTranscripts",
-    async (_evt, base: string, limit?: number) =>
-      await listTranscripts(base, limit ?? 8)
+    async (_evt, base: string, limit?: number) => {
+      const outputDir = await assertConfiguredOutputBase(base);
+      return await listTranscripts(outputDir, limit ?? 8);
+    }
   );
 
-  ipcMain.handle("fs:readFileAsBytes", async (_evt, p: string) => {
-    const buf = await fsp.readFile(p);
-    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-  });
+  ipcMain.handle("fs:readFileAsBytes", async (_evt, p: string) =>
+    await readGrantedAudioFile(p)
+  );
 
   ipcMain.handle("fs:revealInFolder", async (_evt, p: string) => {
     if (!p.trim()) throw new Error("Pfad fehlt.");
-    shell.showItemInFolder(p);
+    const cfg = await readConfig();
+    if (!outputPathAllowed(cfg.outputDir, p)) {
+      throw new Error("Pfad liegt ausserhalb des Ausgabe-Verzeichnisses.");
+    }
+    shell.showItemInFolder(path.resolve(p));
   });
 
   ipcMain.handle("fs:openPath", async (_evt, p: string) => {
     if (!p.trim()) throw new Error("Pfad fehlt.");
-    const error = await shell.openPath(p);
+    const cfg = await readConfig();
+    const resolved = path.resolve(p);
+    if (
+      !outputPathAllowed(cfg.outputDir, resolved) &&
+      !selectedDirectories.has(resolved)
+    ) {
+      throw new Error("Pfad liegt ausserhalb des Ausgabe-Verzeichnisses.");
+    }
+    const error = await shell.openPath(resolved);
     if (error) throw new Error(error);
   });
 
@@ -362,7 +572,9 @@ function registerIpc(): void {
       properties: ["openDirectory", "createDirectory"],
     });
     if (result.canceled || !result.filePaths.length) return null;
-    return result.filePaths[0];
+    const selected = path.resolve(result.filePaths[0]);
+    selectedDirectories.add(selected);
+    return selected;
   });
 
   ipcMain.handle("fs:chooseAudioFile", async () => {
@@ -378,18 +590,29 @@ function registerIpc(): void {
       ],
     });
     if (result.canceled || !result.filePaths.length) return null;
-    return result.filePaths[0];
+    const selected = path.resolve(result.filePaths[0]);
+    if (!supportedAudioFile(selected)) {
+      throw new Error("Dateityp wird nicht unterstuetzt.");
+    }
+    selectedAudioFiles.add(selected);
+    return selected;
   });
 
   ipcMain.handle("fs:defaultOutputDir", async () => defaultOutputDir());
 
   ipcMain.handle(
     "fs:joinTranscriptPath",
-    async (_evt, base: string, filename: string) =>
-      {
-        if (!base.trim()) throw new Error("Ausgabe-Verzeichnis fehlt.");
-        return path.join(base, "transkripte", filename);
-      }
+    async (_evt, base: string, filename: string) => {
+      const outputDir = await assertConfiguredOutputBase(base);
+      const folder = transcriptFolder(outputDir);
+      const target = path.join(
+        folder,
+        safeArtifactFilename(filename, "transkript.txt")
+      );
+      assertPathInside(folder, target);
+      assertTranscriptExtension(target);
+      return target;
+    }
   );
 
   ipcMain.handle("keyterms:list", async () => {
@@ -461,7 +684,11 @@ function registerIpc(): void {
   );
 
   ipcMain.handle("shell:openExternal", async (_evt, url: string) => {
-    await shell.openExternal(url);
+    const parsed = new URL(url);
+    if (!["https:", "http:", "mailto:"].includes(parsed.protocol)) {
+      throw new Error("URL-Schema ist nicht erlaubt.");
+    }
+    await shell.openExternal(parsed.toString());
   });
 }
 

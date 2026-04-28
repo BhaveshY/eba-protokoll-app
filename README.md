@@ -44,11 +44,12 @@ in den Einstellungen auswählen.
 ## Benutzung
 
 1. **Deepgram API-Key** unter Einstellungen eintragen (Keychain).
-2. **Aufnahme starten** klicken. Die App nimmt Mikrofon + System-Audio
-   parallel auf.
-3. **Stoppen** -> Audio wird als WAV unter `aufnahmen/` im Ausgabe-Verzeichnis
-   gespeichert und fuer die Transkription vorbereitet.
-4. **Transkribieren** klicken. Stages: Audio -> Upload -> Deepgram -> Speichern.
+2. **Aufnehmen** klicken. Die App nimmt Mikrofon + System-Audio parallel auf
+   und zeigt eine Live-Aufnahmeleiste mit Timer und Pegeln.
+3. **Stoppen** in der Aufnahmeleiste -> Audio wird als kanalgetreue WAV-Datei
+   unter `aufnahmen/` gespeichert und die Transkription startet automatisch.
+4. Bei importierten Dateien **Datei transkribieren** klicken. Stages: Audio ->
+   Upload -> Deepgram -> Speichern.
 5. **Sprecher zuordnen**: echte Namen eintragen. Deepgram-Diarisierung wird
    kanalbewusst uebernommen, damit Sprecher nicht zusammenfallen.
 6. Das Transkript landet unter `transkripte/` im Ausgabe-Verzeichnis.
