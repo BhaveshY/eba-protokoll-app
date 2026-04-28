@@ -56,6 +56,20 @@ export interface TranscriptFileResult {
   path: string;
 }
 
+export interface RecordingWidgetState {
+  elapsed: number;
+  statusText: string;
+  micLevel: number;
+  systemLevel: number;
+  usedSystemAudio: boolean;
+  labels: {
+    title: string;
+    stop: string;
+    mic: string;
+    system: string;
+  };
+}
+
 export interface KeytermProfiles {
   profiles: Record<string, string[]>;
 }
@@ -105,6 +119,16 @@ export interface EbaApi {
   // Log + open external
   log(level: "info" | "warn" | "error", msg: string): void;
   openExternal(url: string): Promise<void>;
+
+  // Native floating recording control
+  recordingWidget: {
+    show(state: RecordingWidgetState): Promise<void>;
+    update(state: RecordingWidgetState): void;
+    hide(): Promise<void>;
+    requestStop(): void;
+    onStopRequested(handler: () => void): () => void;
+    onState(handler: (state: RecordingWidgetState) => void): () => void;
+  };
 }
 
 declare global {

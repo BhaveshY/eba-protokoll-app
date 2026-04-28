@@ -51,6 +51,33 @@ const api: EbaApi = {
   },
 
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
+
+  recordingWidget: {
+    show: (state) => ipcRenderer.invoke("recordingWidget:show", state),
+    update: (state) => {
+      ipcRenderer.send("recordingWidget:update", state);
+    },
+    hide: () => ipcRenderer.invoke("recordingWidget:hide"),
+    requestStop: () => {
+      ipcRenderer.send("recordingWidget:requestStop");
+    },
+    onStopRequested: (handler) => {
+      const listener = () => handler();
+      ipcRenderer.on("recordingWidget:stopRequested", listener);
+      return () => {
+        ipcRenderer.removeListener("recordingWidget:stopRequested", listener);
+      };
+    },
+    onState: (handler) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: unknown) => {
+        handler(state as Parameters<typeof handler>[0]);
+      };
+      ipcRenderer.on("recordingWidget:state", listener);
+      return () => {
+        ipcRenderer.removeListener("recordingWidget:state", listener);
+      };
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld("eba", api);

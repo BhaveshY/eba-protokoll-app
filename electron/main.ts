@@ -5,6 +5,7 @@ import {
   ipcMain,
   Menu,
   safeStorage,
+  screen,
   shell,
 } from "electron";
 import * as path from "node:path";
@@ -13,6 +14,7 @@ import type {
   AppConfig,
   KeytermProfiles,
   RecentTranscript,
+  RecordingWidgetState,
   TranscriptFileRequest,
   TranscriptFileResult,
 } from "../shared/ipc";
@@ -35,6 +37,10 @@ const SUPPORTED_AUDIO_EXTENSIONS = new Set([
 const TRANSCRIPT_EXTENSIONS = new Set([".txt", ".srt"]);
 const selectedAudioFiles = new Set<string>();
 const selectedDirectories = new Set<string>();
+let mainWindow: BrowserWindow | null = null;
+let recordingWidgetWindow: BrowserWindow | null = null;
+let recordingWidgetLoad: Promise<BrowserWindow> | null = null;
+let lastRecordingWidgetState: RecordingWidgetState | null = null;
 
 // --- config --------------------------------------------------------------
 
@@ -497,6 +503,414 @@ function readTrimmedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+// --- floating recording widget -----------------------------------------
+
+const RECORDING_WIDGET_WIDTH = 360;
+const RECORDING_WIDGET_HEIGHT = 78;
+
+function normalizeRecordingWidgetState(input: unknown): RecordingWidgetState {
+  const candidate =
+    input && typeof input === "object"
+      ? (input as Partial<RecordingWidgetState>)
+      : {};
+  const labels = (
+    candidate.labels && typeof candidate.labels === "object"
+      ? candidate.labels
+      : {}
+  ) as Partial<RecordingWidgetState["labels"]>;
+  return {
+    elapsed: Math.max(0, Math.floor(readFiniteNumber(candidate.elapsed, 0))),
+    statusText: readDisplayText(candidate.statusText, "", 180),
+    micLevel: clampLevel(candidate.micLevel),
+    systemLevel: clampLevel(candidate.systemLevel),
+    usedSystemAudio: candidate.usedSystemAudio === true,
+    labels: {
+      title: readDisplayText(labels.title, "Recording", 48),
+      stop: readDisplayText(labels.stop, "Stop", 32),
+      mic: readDisplayText(labels.mic, "Microphone", 40),
+      system: readDisplayText(labels.system, "Computer", 40),
+    },
+  };
+}
+
+function readFiniteNumber(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function clampLevel(value: unknown): number {
+  const n = readFiniteNumber(value, 0);
+  return Math.max(0, Math.min(1, n));
+}
+
+function readDisplayText(
+  value: unknown,
+  fallback: string,
+  maxLength: number
+): string {
+  const text = typeof value === "string" ? value.trim() : fallback;
+  return text.slice(0, maxLength);
+}
+
+async function showRecordingWidget(state: RecordingWidgetState): Promise<void> {
+  lastRecordingWidgetState = state;
+  const win = await ensureRecordingWidgetWindow();
+  if (win.isDestroyed()) return;
+  positionRecordingWidget(win);
+  sendRecordingWidgetState(state);
+  win.setAlwaysOnTop(true);
+  win.showInactive();
+}
+
+function updateRecordingWidget(state: RecordingWidgetState): void {
+  lastRecordingWidgetState = state;
+  sendRecordingWidgetState(state);
+}
+
+async function ensureRecordingWidgetWindow(): Promise<BrowserWindow> {
+  if (recordingWidgetWindow && !recordingWidgetWindow.isDestroyed()) {
+    return recordingWidgetWindow;
+  }
+  if (recordingWidgetLoad) return recordingWidgetLoad;
+
+  const win = new BrowserWindow({
+    width: RECORDING_WIDGET_WIDTH,
+    height: RECORDING_WIDGET_HEIGHT,
+    minWidth: RECORDING_WIDGET_WIDTH,
+    minHeight: RECORDING_WIDGET_HEIGHT,
+    maxWidth: RECORDING_WIDGET_WIDTH,
+    maxHeight: RECORDING_WIDGET_HEIGHT,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    transparent: true,
+    backgroundColor: "#00000000",
+    show: false,
+    title: "Aufnahme",
+    webPreferences: {
+      preload: path.join(__dirname, "recordingWidgetPreload.js"),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  recordingWidgetWindow = win;
+  positionRecordingWidget(win);
+  win.setAlwaysOnTop(true);
+  if (process.platform === "darwin") {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+
+  win.on("closed", () => {
+    if (recordingWidgetWindow === win) recordingWidgetWindow = null;
+    if (recordingWidgetLoad) recordingWidgetLoad = null;
+  });
+
+  recordingWidgetLoad = win
+    .loadURL(recordingWidgetDataUrl())
+    .then(() => {
+      if (recordingWidgetWindow === win) recordingWidgetLoad = null;
+      if (lastRecordingWidgetState) sendRecordingWidgetState(lastRecordingWidgetState);
+      return win;
+    })
+    .catch((err) => {
+      if (recordingWidgetWindow === win) recordingWidgetWindow = null;
+      if (recordingWidgetLoad) recordingWidgetLoad = null;
+      if (win.isDestroyed()) return win;
+      win.destroy();
+      throw err;
+    });
+
+  return recordingWidgetLoad;
+}
+
+function closeRecordingWidget(): void {
+  const win = recordingWidgetWindow;
+  recordingWidgetWindow = null;
+  recordingWidgetLoad = null;
+  lastRecordingWidgetState = null;
+  if (win && !win.isDestroyed()) win.destroy();
+}
+
+function sendRecordingWidgetState(state: RecordingWidgetState): void {
+  const win = recordingWidgetWindow;
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send("recordingWidget:state", state);
+}
+
+function positionRecordingWidget(win: BrowserWindow): void {
+  const display = screen.getPrimaryDisplay();
+  const { workArea } = display;
+  const x = Math.round(
+    workArea.x + (workArea.width - RECORDING_WIDGET_WIDTH) / 2
+  );
+  const y = Math.round(workArea.y + workArea.height - RECORDING_WIDGET_HEIGHT - 24);
+  win.setPosition(x, Math.max(workArea.y, y), false);
+}
+
+function recordingWidgetDataUrl(): string {
+  return `data:text/html;charset=utf-8,${encodeURIComponent(recordingWidgetHtml())}`;
+}
+
+function recordingWidgetHtml(): string {
+  return String.raw`<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';" />
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #191919;
+      user-select: none;
+    }
+    #shell {
+      box-sizing: border-box;
+      height: calc(100% - 12px);
+      margin: 6px;
+      border: 1px solid rgba(25, 25, 25, 0.11);
+      border-radius: 8px;
+      background: rgba(252, 252, 250, 0.97);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.18);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      -webkit-app-region: drag;
+    }
+    .dot {
+      width: 24px;
+      height: 24px;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      background: rgba(190, 45, 45, 0.08);
+      display: grid;
+      place-items: center;
+    }
+    .dot::after {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #be2d2d;
+      box-shadow: 0 0 0 0 rgba(190, 45, 45, 0.3);
+      animation: pulse 1.5s ease-out infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(190, 45, 45, 0.3); }
+      70% { box-shadow: 0 0 0 7px rgba(190, 45, 45, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(190, 45, 45, 0); }
+    }
+    .copy {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .topline {
+      display: grid;
+      gap: 1px;
+      min-width: 0;
+    }
+    #title {
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 10px;
+      font-weight: 650;
+      white-space: nowrap;
+      color: #77736d;
+    }
+    #timer {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 15px;
+      font-weight: 700;
+      color: #191919;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    #status {
+      display: none;
+    }
+    .meters {
+      width: 84px;
+      flex: 0 0 auto;
+      display: grid;
+      gap: 4px;
+    }
+    #shell.system-off .meters {
+      width: 66px;
+      grid-template-columns: 1fr;
+    }
+    #shell.system-off .system {
+      display: none;
+    }
+    .meter-block {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr);
+      align-items: center;
+      gap: 5px;
+    }
+    .label {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 9px;
+      font-weight: 700;
+      color: #77736d;
+    }
+    .meter {
+      height: 6px;
+      box-sizing: border-box;
+      display: flex;
+      align-items: stretch;
+      gap: 1px;
+      padding: 0;
+      border-radius: 999px;
+      background: #e8e7e2;
+      overflow: hidden;
+    }
+    .bar {
+      flex: 1 1 0;
+      height: 100% !important;
+      border-radius: 0;
+      background: transparent;
+      transition: background 120ms ease;
+    }
+    .bar.active {
+      background: #be2d2d;
+    }
+    #stop {
+      flex: 0 0 auto;
+      border: 0;
+      border-radius: 8px;
+      background: #be2d2d;
+      color: #fff;
+      min-width: 54px;
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+    }
+    #stop:active {
+      background: #a92525;
+    }
+    #stop:disabled {
+      opacity: 0.65;
+      cursor: default;
+    }
+  </style>
+</head>
+<body>
+  <div id="shell">
+    <div class="dot" aria-hidden="true"></div>
+    <div class="copy">
+      <div class="topline">
+        <span id="title">Recording</span>
+        <span id="timer">00:00:00</span>
+      </div>
+      <p id="status"></p>
+    </div>
+    <div class="meters" aria-hidden="true">
+      <div class="meter-block">
+        <span class="label" id="mic-label">Microphone</span>
+        <div class="meter" id="mic-meter"></div>
+      </div>
+      <div class="meter-block system">
+        <span class="label" id="system-label">Computer</span>
+        <div class="meter" id="system-meter"></div>
+      </div>
+    </div>
+    <button id="stop" type="button">Stop</button>
+  </div>
+  <script>
+    const shell = document.getElementById("shell");
+    const stopButton = document.getElementById("stop");
+    const micMeter = document.getElementById("mic-meter");
+    const systemMeter = document.getElementById("system-meter");
+    const bars = new Map();
+
+    function makeBars(root) {
+      const set = [];
+      for (let i = 0; i < 14; i += 1) {
+        const bar = document.createElement("span");
+        bar.className = "bar";
+        bar.style.height = 5 + (i % 7) * 2 + "px";
+        root.appendChild(bar);
+        set.push(bar);
+      }
+      return set;
+    }
+
+    bars.set("mic", makeBars(micMeter));
+    bars.set("system", makeBars(systemMeter));
+
+    function fmtDuration(sec) {
+      const safe = Math.max(0, Math.floor(Number(sec) || 0));
+      const h = Math.floor(safe / 3600);
+      const m = Math.floor((safe % 3600) / 60);
+      const s = safe % 60;
+      const pad = (n) => String(n).padStart(2, "0");
+      return pad(h) + ":" + pad(m) + ":" + pad(s);
+    }
+
+    function setText(id, value) {
+      document.getElementById(id).textContent = value || "";
+    }
+
+    function shortLabel(value, fallback) {
+      const text = String(value || "").toLowerCase();
+      if (text.includes("computer") || text.includes("system")) return "PC";
+      if (text.includes("mikro") || text.includes("micro") || text.includes("mic")) return "Mic";
+      return fallback;
+    }
+
+    function renderMeter(name, level) {
+      const active = Math.round(Math.max(0, Math.min(1, Number(level) || 0)) * 14);
+      for (const [index, bar] of bars.get(name).entries()) {
+        bar.classList.toggle("active", index < active);
+      }
+    }
+
+    function render(state) {
+      const labels = state && state.labels ? state.labels : {};
+      setText("title", labels.title || "Recording");
+      setText("timer", fmtDuration(state && state.elapsed));
+      setText("status", state && state.statusText ? state.statusText : "");
+      setText("mic-label", shortLabel(labels.mic, "Mic"));
+      setText("system-label", shortLabel(labels.system, "PC"));
+      setText("stop", labels.stop || "Stop");
+      shell.classList.toggle("system-off", !(state && state.usedSystemAudio));
+      renderMeter("mic", state && state.micLevel);
+      renderMeter("system", state && state.systemLevel);
+    }
+
+    stopButton.addEventListener("click", () => {
+      stopButton.disabled = true;
+      window.recordingWidget.requestStop();
+      window.setTimeout(() => {
+        stopButton.disabled = false;
+      }, 3000);
+    });
+
+    window.recordingWidget.onState(render);
+  </script>
+</body>
+</html>`;
+}
+
 // --- IPC ----------------------------------------------------------------
 
 function registerIpc(): void {
@@ -690,11 +1104,30 @@ function registerIpc(): void {
     }
     await shell.openExternal(parsed.toString());
   });
+
+  ipcMain.handle("recordingWidget:show", async (_evt, state: unknown) => {
+    await showRecordingWidget(normalizeRecordingWidgetState(state));
+  });
+
+  ipcMain.on("recordingWidget:update", (_evt, state: unknown) => {
+    updateRecordingWidget(normalizeRecordingWidgetState(state));
+  });
+
+  ipcMain.handle("recordingWidget:hide", async () => {
+    closeRecordingWidget();
+  });
+
+  ipcMain.on("recordingWidget:requestStop", (evt) => {
+    const sender = BrowserWindow.fromWebContents(evt.sender);
+    if (sender !== recordingWidgetWindow) return;
+    if (!mainWindow || mainWindow.webContents.isDestroyed()) return;
+    mainWindow.webContents.send("recordingWidget:stopRequested");
+  });
 }
 
 // --- window -------------------------------------------------------------
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 900,
     height: 820,
@@ -710,6 +1143,7 @@ function createWindow(): void {
       nodeIntegration: false,
     },
   });
+  mainWindow = win;
 
   if (!devServerUrl) {
     Menu.setApplicationMenu(null);
@@ -725,6 +1159,13 @@ function createWindow(): void {
     // renderer at dist/index.html  →  two levels up.
     win.loadFile(path.join(__dirname, "..", "..", "dist", "index.html"));
   }
+
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+    closeRecordingWidget();
+  });
+
+  return win;
 }
 
 app.whenReady().then(async () => {
@@ -741,7 +1182,12 @@ app.whenReady().then(async () => {
   createWindow();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!mainWindow) {
+      createWindow();
+      return;
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
   });
 });
 

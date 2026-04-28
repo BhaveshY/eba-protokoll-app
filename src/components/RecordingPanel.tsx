@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppConfig } from "@shared/ipc";
+import type { AppConfig, RecordingWidgetState } from "@shared/ipc";
 import clsx from "../lib/clsx";
 import { findDeviceByHint, listInputDevices } from "../lib/devices";
 import { useT, type TranslateFn } from "../lib/i18n";
@@ -71,6 +71,7 @@ export function RecordingPanel({
       clearTimer();
       recorderRef.current?.abort();
       recorderRef.current = null;
+      void window.eba.recordingWidget.hide();
     },
     []
   );
@@ -191,6 +192,14 @@ export function RecordingPanel({
     }
   }, [config.outputDir, onLoaded, onLog, onTranscribeAudio, projectName, t]);
 
+  useEffect(
+    () =>
+      window.eba.recordingWidget.onStopRequested(() => {
+        void stopRecording();
+      }),
+    [stopRecording]
+  );
+
   const importFile = useCallback(async () => {
     if (disabled) return;
     const p = await window.eba.fs.chooseAudioFile();
@@ -270,15 +279,34 @@ export function RecordingPanel({
   const isRecording = mode === "recording";
   const summary = loaded ? describeLoadedAudio(loaded, t) : null;
 
+  useEffect(() => {
+    if (!isRecording) {
+      void window.eba.recordingWidget.hide();
+      return;
+    }
+    void window.eba.recordingWidget.show(
+      toRecordingWidgetState({ elapsed, levels, statusText, t })
+    );
+    return () => {
+      void window.eba.recordingWidget.hide();
+    };
+  }, [isRecording]);
+
+  useEffect(() => {
+    if (!isRecording) return;
+    window.eba.recordingWidget.update(
+      toRecordingWidgetState({ elapsed, levels, statusText, t })
+    );
+  }, [elapsed, isRecording, levels, statusText, t]);
+
   return (
-    <>
-      <Card
-        className={clsx(
-          "transition-colors duration-150",
-          dropActive && "border-fg/40 bg-fg/[0.02]"
-        )}
-      >
-        <div className="flex flex-col gap-6">
+    <Card
+      className={clsx(
+        "transition-colors duration-150",
+        dropActive && "border-fg/40 bg-fg/[0.02]"
+      )}
+    >
+      <div className="flex flex-col gap-6">
         {/* Project input */}
         <div className="grid gap-1.5">
           <label
@@ -322,41 +350,41 @@ export function RecordingPanel({
           </div>
         </div>
 
-          {/* Actions */}
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              className={clsx(isRecording ? "btn-danger" : "btn-primary", "py-2.5")}
-              disabled={disabled && !isRecording}
-              onClick={isRecording ? stopRecording : startRecording}
-            >
-              {transcribing
-                ? t("app.action.transcribing")
-                : isRecording
-                  ? t("record.action.stop")
-                  : t("record.action.startWorkflow")}
-            </button>
-            {loaded && !isRecording && !transcribing && onTranscribeAudio && (
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => void onTranscribeAudio(loaded)}
-              >
-                {loaded.source === "imported"
-                  ? t("record.action.transcribeFile")
-                  : t("record.action.transcribeRecording")}
-              </button>
-            )}
+        {/* Actions */}
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            className={clsx(isRecording ? "btn-danger" : "btn-primary", "py-2.5")}
+            disabled={disabled && !isRecording}
+            onClick={isRecording ? stopRecording : startRecording}
+          >
+            {transcribing
+              ? t("app.action.transcribing")
+              : isRecording
+                ? t("record.action.stop")
+                : t("record.action.startWorkflow")}
+          </button>
+          {loaded && !isRecording && !transcribing && onTranscribeAudio && (
             <button
               type="button"
               className="btn-ghost"
-              onClick={importFile}
-              disabled={disabled || isRecording}
-              title={t("record.import.title")}
+              onClick={() => void onTranscribeAudio(loaded)}
             >
-              {t("record.action.import")}
+              {loaded.source === "imported"
+                ? t("record.action.transcribeFile")
+                : t("record.action.transcribeRecording")}
             </button>
-          </div>
+          )}
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={importFile}
+            disabled={disabled || isRecording}
+            title={t("record.import.title")}
+          >
+            {t("record.action.import")}
+          </button>
+        </div>
 
         {/* Dropzone */}
         <div
@@ -379,114 +407,35 @@ export function RecordingPanel({
             {summary}
           </p>
         )}
-        </div>
-      </Card>
-      {isRecording && (
-        <RecordingWidget
-          elapsed={elapsed}
-          levels={levels}
-          statusText={statusText}
-          onStop={stopRecording}
-        />
-      )}
-    </>
+      </div>
+    </Card>
   );
 }
 
-function RecordingWidget({
+function toRecordingWidgetState({
   elapsed,
   levels,
   statusText,
-  onStop,
+  t,
 }: {
   elapsed: number;
   levels: RecorderLevels;
   statusText: string;
-  onStop: () => void;
-}) {
-  const t = useT();
-  return (
-    <div className="fixed bottom-4 left-1/2 z-40 w-[min(92vw,520px)] -translate-x-1/2 rounded-lg border border-line bg-bg-card px-3 py-2.5 shadow-cardHover">
-      <div className="flex items-center gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger">
-            <RecordingDot active />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-baseline gap-2">
-              <span className="text-[12px] font-semibold text-fg">
-                {t("record.widget.title")}
-              </span>
-              <span className="font-mono text-[12px] tabular-nums text-fg-muted">
-                {fmtDuration(elapsed)}
-              </span>
-            </div>
-            <p className="truncate text-[11px] text-fg-subtle">{statusText}</p>
-          </div>
-        </div>
-
-        <div
-          className={clsx(
-            "hidden min-w-[150px] gap-2 sm:grid",
-            levels.usedSystemAudio ? "grid-cols-2" : "grid-cols-1"
-          )}
-        >
-          <LevelMeter label={t("record.widget.mic")} level={levels.mic} />
-          {levels.usedSystemAudio && (
-            <LevelMeter
-              label={t("record.widget.system")}
-              level={levels.system}
-            />
-          )}
-        </div>
-
-        <button
-          type="button"
-          className="btn-danger shrink-0 px-3 py-2 text-[12px]"
-          onClick={onStop}
-          aria-label={t("record.widget.stop")}
-        >
-          {t("record.widget.stop")}
-        </button>
-      </div>
-      <div
-        className={clsx(
-          "mt-2 grid gap-2 sm:hidden",
-          levels.usedSystemAudio ? "grid-cols-2" : "grid-cols-1"
-        )}
-      >
-        <LevelMeter label={t("record.widget.mic")} level={levels.mic} />
-        {levels.usedSystemAudio && (
-          <LevelMeter label={t("record.widget.system")} level={levels.system} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function LevelMeter({ label, level }: { label: string; level: number }) {
-  const activeBars = Math.round(Math.max(0, Math.min(1, level)) * 14);
-  return (
-    <div className="min-w-0">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="truncate text-[10px] font-medium text-fg-muted">
-          {label}
-        </span>
-      </div>
-      <div className="flex h-7 items-end gap-0.5 overflow-hidden rounded-md bg-bg-subtle px-1.5 py-1">
-        {Array.from({ length: 14 }, (_, i) => (
-          <span
-            key={i}
-            className={clsx(
-              "w-1 flex-1 rounded-sm transition-colors duration-100",
-              i < activeBars ? "bg-danger" : "bg-line"
-            )}
-            style={{ height: `${5 + (i % 7) * 2}px` }}
-          />
-        ))}
-      </div>
-    </div>
-  );
+  t: TranslateFn;
+}): RecordingWidgetState {
+  return {
+    elapsed,
+    statusText,
+    micLevel: levels.mic,
+    systemLevel: levels.system,
+    usedSystemAudio: levels.usedSystemAudio,
+    labels: {
+      title: t("record.widget.title"),
+      stop: t("record.widget.stop"),
+      mic: t("record.widget.mic"),
+      system: t("record.widget.system"),
+    },
+  };
 }
 
 function fmtDuration(sec: number): string {
