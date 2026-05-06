@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppConfig, EbaApi } from "../shared/ipc";
+import type { AppConfig, EbaApi, TranscribeAudioRequest } from "../shared/ipc";
 
 const api: EbaApi = {
   platform: process.platform as EbaApi["platform"],
@@ -44,6 +44,12 @@ const api: EbaApi = {
       ipcRenderer.invoke("keyterms:createProfile", name),
     deleteProfile: (name: string) =>
       ipcRenderer.invoke("keyterms:deleteProfile", name),
+  },
+
+  transcription: {
+    transcribe: (request: TranscribeAudioRequest) =>
+      ipcRenderer.invoke("transcription:transcribe", request),
+    cancel: () => ipcRenderer.invoke("transcription:cancel"),
   },
 
   log: (level, msg) => {

@@ -26,6 +26,7 @@ const de = {
   "header.settings": "Einstellungen",
   "header.settings.title": "Einstellungen (Cmd/Ctrl + ,)",
   "header.language.title": "Sprache der Oberflaeche",
+  "header.glossaryProfile": "Glossar: {name}",
 
   // Recording panel
   "record.projectName": "Projektname",
@@ -35,6 +36,12 @@ const de = {
   "record.status.recordingLabel": "Aufnahme laeuft",
   "record.status.micPlusSystem": "Mikrofon + System-Audio",
   "record.status.micOnly": "Nur Mikrofon — kein System-Audio-Geraet",
+  "record.status.systemDeviceMissing":
+    "Nur Mikrofon — System-Audio-Geraet „{name}” wurde nicht gefunden.",
+  "record.status.systemDeviceFailed":
+    "Nur Mikrofon — System-Audio konnte nicht geoeffnet werden: {msg}",
+  "record.status.minutesOnly":
+    "Nur fuer Protokoll — nur Mikrofon, kein System-Audio",
   "record.status.finishing": "Aufnahme wird abgeschlossen …",
   "record.status.readyToTranscribeRec": "Aufnahme bereit fuer Transkription.",
   "record.status.savedRecording": "Aufnahme gespeichert und bereit fuer Transkription.",
@@ -44,6 +51,10 @@ const de = {
   "record.status.empty": "Die importierte Datei ist leer.",
   "record.status.unsupported":
     "Nicht unterstuetzte Datei. Bitte Audio oder Video importieren.",
+  "record.status.tooLarge":
+    "Datei ist zu gross ({size}). Deepgram akzeptiert maximal 2 GB pro Anfrage.",
+  "record.status.largeFile":
+    "Grosse Datei ({size}). Fuer beste Stabilitaet bei Videos besser nur die Audiospur importieren.",
   "record.status.multipleDropped":
     "Mehrere Dateien erkannt. Die erste Datei wurde geladen.",
   "record.status.micError": "Mikrofon-Fehler: {msg}",
@@ -52,10 +63,13 @@ const de = {
   "record.action.start": "Aufnahme starten",
   "record.action.startWorkflow": "Aufnehmen",
   "record.action.stop": "Aufnahme stoppen",
+  "record.action.minutesOnly": "Nur fuer Protokoll",
   "record.action.transcribeRecording": "Aufnahme transkribieren",
   "record.action.transcribeFile": "Datei transkribieren",
   "record.action.import": "Datei importieren …",
   "record.import.title": "Cmd/Ctrl + O",
+  "record.minutes.confirm":
+    "Ich weiss, was ich tue. Es wird nur mein eigenes Mikrofon aufgenommen. Ich werde keine anderen Teilnehmenden oder Meeting-Audio ohne Einwilligung aufnehmen.",
   "record.widget.title": "Aufnahme laeuft",
   "record.widget.stop": "Stoppen",
   "record.widget.mic": "Mikrofon",
@@ -66,6 +80,7 @@ const de = {
   "record.summary.recorded": "Aufnahme · {duration} · {size} · {mode}",
   "record.summary.modeStereo": "Stereo (Mic + System)",
   "record.summary.modeMono": "Mono (nur Mic)",
+  "record.summary.modeMinutes": "Mono (nur fuer Protokoll)",
 
   // App main
   "app.loading": "Lade …",
@@ -114,6 +129,7 @@ const de = {
   "recent.empty": "Noch keine Transkripte.",
   "recent.reveal": "Im Ordner zeigen",
   "recent.hasSubtitles": "SRT-Untertitel",
+  "recent.ready": "Fertig",
 
   // Settings panel
   "settings.title": "Einstellungen",
@@ -157,7 +173,7 @@ const de = {
     "Lange Redebeitraege werden in lesbare Absaetze zerlegt.",
   "settings.intelligence.summarize": "Zusammenfassung erzeugen",
   "settings.intelligence.summarize.hint":
-    "Speichert eine kurze Zusammenfassung als .summary.txt neben dem Transkript.",
+    "Speichert fuer Englisch eine Deepgram-Zusammenfassung, sonst automatische Auszuege.",
   "settings.intelligence.generateSubtitles": "SRT-Untertitel erzeugen",
   "settings.intelligence.generateSubtitles.hint":
     "Speichert eine synchronisierte .srt-Datei neben dem Transkript.",
@@ -232,6 +248,12 @@ const de = {
   "glossary.terms.search": "Suchen …",
   "glossary.terms.remove": "Entfernen",
   "glossary.terms.noMatches": "Keine Treffer.",
+  "glossary.import.label": "Liste importieren",
+  "glossary.import.placeholder": "Fassade\nRohbau\nTragwerk",
+  "glossary.import.action": "Liste importieren",
+  "glossary.import.count": "{count} erkannt",
+  "glossary.import.success": "Neue Begriffe importiert: {count}",
+  "glossary.import.none": "Keine neuen Begriffe erkannt.",
   "glossary.action.done": "Fertig",
   "glossary.action.cancel": "Abbrechen",
   "glossary.save.success": "Glossar gespeichert.",
@@ -253,6 +275,7 @@ const en: Dict = {
   "header.settings": "Settings",
   "header.settings.title": "Settings (Cmd/Ctrl + ,)",
   "header.language.title": "Interface language",
+  "header.glossaryProfile": "Glossary: {name}",
 
   // Recording panel
   "record.projectName": "Project name",
@@ -262,6 +285,12 @@ const en: Dict = {
   "record.status.recordingLabel": "Recording",
   "record.status.micPlusSystem": "Microphone + system audio",
   "record.status.micOnly": "Microphone only — no system-audio device",
+  "record.status.systemDeviceMissing":
+    "Microphone only — system-audio device “{name}” was not found.",
+  "record.status.systemDeviceFailed":
+    "Microphone only — system audio could not be opened: {msg}",
+  "record.status.minutesOnly":
+    "For Minutes Only — microphone only, no system audio",
   "record.status.finishing": "Finishing recording …",
   "record.status.readyToTranscribeRec": "Recording ready to transcribe.",
   "record.status.savedRecording": "Recording saved and ready to transcribe.",
@@ -270,6 +299,10 @@ const en: Dict = {
   "record.status.saveError": "Recording could not be saved: {msg}",
   "record.status.empty": "The imported file is empty.",
   "record.status.unsupported": "Unsupported file. Please import audio or video.",
+  "record.status.tooLarge":
+    "File is too large ({size}). Deepgram accepts up to 2 GB per request.",
+  "record.status.largeFile":
+    "Large file ({size}). For best stability with videos, import the audio track only.",
   "record.status.multipleDropped": "Multiple files detected. The first was loaded.",
   "record.status.micError": "Microphone error: {msg}",
   "record.status.stopError": "Stop error: {msg}",
@@ -277,10 +310,13 @@ const en: Dict = {
   "record.action.start": "Start recording",
   "record.action.startWorkflow": "Record",
   "record.action.stop": "Stop recording",
+  "record.action.minutesOnly": "For Minutes Only",
   "record.action.transcribeRecording": "Transcribe recording",
   "record.action.transcribeFile": "Transcribe file",
   "record.action.import": "Import file …",
   "record.import.title": "Cmd/Ctrl + O",
+  "record.minutes.confirm":
+    "I know what I am doing. Only my own microphone will be recorded. I will not record other participants or meeting audio without consent.",
   "record.widget.title": "Recording",
   "record.widget.stop": "Stop",
   "record.widget.mic": "Microphone",
@@ -291,6 +327,7 @@ const en: Dict = {
   "record.summary.recorded": "Recording · {duration} · {size} · {mode}",
   "record.summary.modeStereo": "Stereo (mic + system)",
   "record.summary.modeMono": "Mono (mic only)",
+  "record.summary.modeMinutes": "Mono (for minutes only)",
 
   // App main
   "app.loading": "Loading …",
@@ -337,6 +374,7 @@ const en: Dict = {
   "recent.empty": "No transcripts yet.",
   "recent.reveal": "Show in folder",
   "recent.hasSubtitles": "SRT subtitles",
+  "recent.ready": "Ready",
 
   // Settings panel
   "settings.title": "Settings",
@@ -380,7 +418,7 @@ const en: Dict = {
     "Long turns are broken into readable paragraphs.",
   "settings.intelligence.summarize": "Generate summary",
   "settings.intelligence.summarize.hint":
-    "Saves a short summary as .summary.txt alongside the transcript.",
+    "Saves a Deepgram summary for English, otherwise automatic excerpts.",
   "settings.intelligence.generateSubtitles": "Generate SRT subtitles",
   "settings.intelligence.generateSubtitles.hint":
     "Saves a synced .srt file alongside the transcript.",
@@ -454,6 +492,12 @@ const en: Dict = {
   "glossary.terms.search": "Search …",
   "glossary.terms.remove": "Remove",
   "glossary.terms.noMatches": "No matches.",
+  "glossary.import.label": "Import list",
+  "glossary.import.placeholder": "Facade\nShell construction\nStructural frame",
+  "glossary.import.action": "Import list",
+  "glossary.import.count": "{count} found",
+  "glossary.import.success": "New terms imported: {count}",
+  "glossary.import.none": "No new terms found.",
   "glossary.action.done": "Done",
   "glossary.action.cancel": "Cancel",
   "glossary.save.success": "Glossary saved.",

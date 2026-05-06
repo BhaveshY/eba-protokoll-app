@@ -29,8 +29,10 @@ export function ProgressPanel({
         ) : undefined
       }
     >
-      <div className="flex flex-col gap-4">
-        <StageProgress stage={tx.stage} />
+      <div className="flex flex-col gap-3">
+        <div className="rounded-lg border border-line bg-bg-subtle px-3 py-3">
+          <StageProgress stage={tx.stage} />
+        </div>
         <Progress value={tx.uploadPct} />
         <p className="min-h-[1em] text-[12px] leading-snug text-fg-muted">
           {tx.status || (isActive ? t("progress.working") : t("progress.ready"))}

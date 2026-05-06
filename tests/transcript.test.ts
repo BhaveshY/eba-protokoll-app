@@ -303,7 +303,8 @@ describe("formatSummary", () => {
       },
     ], summary);
 
-    expect(out).toContain("Zusammenfassung");
+    expect(out).toContain("Automatische Auszuege");
+    expect(out).not.toContain("Zusammenfassung");
     expect(out).toContain("Guten Morgen");
     expect(out).toContain("approve the budget");
   });

@@ -1,4 +1,5 @@
 import { encodeWavFromChunks, totalSamples } from "./wav";
+import type { SystemAudioSource } from "./devices";
 
 /**
  * Recorder captures mic + (optional) system audio as separate tracks,
@@ -6,17 +7,15 @@ import { encodeWavFromChunks, totalSamples } from "./wav";
  * system audio on the right channel.
  *
  * System audio source per platform:
- *  - Windows: Electron desktopCapturer screen source with
- *    chromeMediaSource=desktop + chromeMediaSourceAudio=loopback.
- *    We implement that via a renderer-side shortcut: ask for a stream from
- *    the installed loopback deviceId if present; on Windows 11 + Stereo Mix
- *    or similar virtual devices this works via MediaDevices too.
+ *  - Windows: Electron getDisplayMedia + setDisplayMediaRequestHandler grants
+ *    system loopback audio from the main process.
  *  - macOS / Linux: user-chosen virtual input device (BlackHole, PulseAudio monitor).
  */
 
 export interface RecorderOptions {
   micDeviceId?: string;
   systemDeviceId?: string;
+  systemAudio?: SystemAudioSource;
   sampleRate?: number;
   onLevel?: (levels: RecorderLevels) => void;
 }
@@ -45,6 +44,7 @@ export class MeetingRecorder {
   private micChunks: Float32Array[] = [];
   private sysChunks: Float32Array[] = [];
   private graphNodes: AudioNode[] = [];
+  private sysError: string | null = null;
   private levels: RecorderLevels = {
     mic: 0,
     system: 0,
@@ -58,8 +58,17 @@ export class MeetingRecorder {
     return this.ctx !== null;
   }
 
+  get systemAudioActive(): boolean {
+    return this.sysStream !== null;
+  }
+
+  get systemAudioError(): string | null {
+    return this.sysError;
+  }
+
   async start(): Promise<void> {
     if (this.running) throw new Error("Recorder laeuft bereits.");
+    this.sysError = null;
     const sr = this.opts.sampleRate ?? DEFAULT_SR;
     this.ctx = new AudioContext({ sampleRate: sr });
 
@@ -77,25 +86,64 @@ export class MeetingRecorder {
     });
     this.attachProcessor(this.micStream, "mic");
 
-    // System-audio stream (optional)
-    if (this.opts.systemDeviceId) {
-      try {
-        this.sysStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            deviceId: { exact: this.opts.systemDeviceId },
-            echoCancellation: false,
-            noiseSuppression: false,
-            channelCount: 1,
-          },
-        });
-        this.attachProcessor(this.sysStream, "sys");
-      } catch (err) {
-        console.warn("System-audio stream failed:", err);
-        this.sysStream = null;
-      }
+    const systemAudio = this.opts.systemAudio ??
+      (this.opts.systemDeviceId
+        ? ({ kind: "input-device", deviceId: this.opts.systemDeviceId } as const)
+        : undefined);
+    if (systemAudio) {
+      await this.startSystemAudio(systemAudio);
     }
 
     this.startedAt = performance.now();
+  }
+
+  private async startSystemAudio(source: SystemAudioSource): Promise<void> {
+    try {
+      this.sysStream =
+        source.kind === "windows-loopback"
+          ? await this.getWindowsLoopbackStream(source.fallbackDeviceId)
+          : await navigator.mediaDevices.getUserMedia({
+              audio: {
+                deviceId: { exact: source.deviceId },
+                echoCancellation: false,
+                noiseSuppression: false,
+                channelCount: 1,
+              },
+            });
+      this.attachProcessor(this.sysStream, "sys");
+    } catch (err) {
+      console.warn("System-audio stream failed:", err);
+      this.sysError = (err as Error).message || "System-Audio nicht verfuegbar.";
+      this.sysStream = null;
+    }
+  }
+
+  private async getWindowsLoopbackStream(
+    fallbackDeviceId?: string
+  ): Promise<MediaStream> {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        audio: true,
+        video: true,
+      });
+      stream.getVideoTracks().forEach((track) => track.stop());
+      const audioTracks = stream.getAudioTracks();
+      if (!audioTracks.length) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error("Windows-Systemaudio wurde nicht bereitgestellt.");
+      }
+      return new MediaStream(audioTracks);
+    } catch (err) {
+      if (!fallbackDeviceId) throw err;
+      return await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: { exact: fallbackDeviceId },
+          echoCancellation: false,
+          noiseSuppression: false,
+          channelCount: 1,
+        },
+      });
+    }
   }
 
   private attachProcessor(stream: MediaStream, kind: "mic" | "sys"): void {
@@ -182,6 +230,7 @@ export class MeetingRecorder {
     this.sysStream = null;
     this.micProcessor = null;
     this.sysProcessor = null;
+    this.sysError = null;
     this.micChunks = [];
     this.sysChunks = [];
     this.levels = { mic: 0, system: 0, usedSystemAudio: false };

@@ -6,11 +6,11 @@ const config: Config = {
     extend: {
       colors: {
         bg: {
-          app: "#fafaf7",
+          app: "#f8f8f5",
           card: "#ffffff",
-          inset: "#f3f3ef",
-          subtle: "#f7f7f4",
-          footer: "#f3f3ef",
+          inset: "#f1f1ed",
+          subtle: "#f6f6f2",
+          footer: "#f1f1ed",
         },
         fg: {
           DEFAULT: "#111111",
@@ -63,12 +63,12 @@ const config: Config = {
         ],
       },
       borderRadius: {
-        card: "12px",
+        card: "8px",
       },
       boxShadow: {
-        card: "0 1px 0 rgba(17, 17, 17, 0.02), 0 1px 2px rgba(17, 17, 17, 0.04)",
+        card: "0 1px 0 rgba(17, 17, 17, 0.03), 0 1px 3px rgba(17, 17, 17, 0.04)",
         cardHover:
-          "0 2px 6px rgba(17, 17, 17, 0.05), 0 8px 24px rgba(17, 17, 17, 0.06)",
+          "0 8px 28px rgba(17, 17, 17, 0.08), 0 1px 3px rgba(17, 17, 17, 0.05)",
         focus: "0 0 0 3px rgba(17, 17, 17, 0.12)",
       },
       keyframes: {

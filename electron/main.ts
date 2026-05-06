@@ -1,11 +1,13 @@
 import {
   app,
   BrowserWindow,
+  desktopCapturer,
   dialog,
   ipcMain,
   Menu,
   safeStorage,
   screen,
+  session,
   shell,
 } from "electron";
 import * as path from "node:path";
@@ -15,25 +17,19 @@ import type {
   KeytermProfiles,
   RecentTranscript,
   RecordingWidgetState,
+  TranscribeAudioRequest,
   TranscriptFileRequest,
   TranscriptFileResult,
 } from "../shared/ipc";
 import { DEFAULT_CONFIG } from "../shared/ipc";
+import { assessAudioImport, supportedAudioExtension } from "../shared/audioLimits";
+import { MainTranscriptionController } from "./transcription";
+import { installWindowsLoopbackDisplayMediaHandler } from "./systemAudio";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 
 const CONFIG_FILE = "config.json";
 const API_KEY_FILE = "deepgram.bin";
-const SUPPORTED_AUDIO_EXTENSIONS = new Set([
-  ".wav",
-  ".mp3",
-  ".m4a",
-  ".mp4",
-  ".mkv",
-  ".ogg",
-  ".flac",
-  ".webm",
-]);
 const TRANSCRIPT_EXTENSIONS = new Set([".txt", ".srt"]);
 const selectedAudioFiles = new Set<string>();
 const selectedDirectories = new Set<string>();
@@ -41,6 +37,7 @@ let mainWindow: BrowserWindow | null = null;
 let recordingWidgetWindow: BrowserWindow | null = null;
 let recordingWidgetLoad: Promise<BrowserWindow> | null = null;
 let lastRecordingWidgetState: RecordingWidgetState | null = null;
+const transcriptionController = new MainTranscriptionController({ readApiKey });
 
 // --- config --------------------------------------------------------------
 
@@ -216,13 +213,24 @@ function outputPathAllowed(base: string, target: string): boolean {
 }
 
 function supportedAudioFile(p: string): boolean {
-  return SUPPORTED_AUDIO_EXTENSIONS.has(path.extname(p).toLowerCase());
+  return supportedAudioExtension(p);
 }
 
 async function readGrantedAudioFile(p: string): Promise<ArrayBuffer> {
   const resolved = path.resolve(p);
   if (!selectedAudioFiles.has(resolved) || !supportedAudioFile(resolved)) {
     throw new Error("Audio-Datei wurde nicht ueber den Dateidialog freigegeben.");
+  }
+  const stat = await fsp.stat(resolved);
+  const assessment = assessAudioImport(resolved, stat.size);
+  if (!assessment.ok) {
+    if (assessment.code === "empty") {
+      throw new Error("Die importierte Datei ist leer.");
+    }
+    if (assessment.code === "too_large") {
+      throw new Error("Datei ist zu gross. Deepgram akzeptiert maximal 2 GB pro Anfrage.");
+    }
+    throw new Error("Dateityp wird nicht unterstuetzt.");
   }
   const buf = await fsp.readFile(resolved);
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
@@ -1088,6 +1096,16 @@ function registerIpc(): void {
   });
 
   ipcMain.handle(
+    "transcription:transcribe",
+    async (_evt, request: TranscribeAudioRequest) =>
+      await transcriptionController.transcribe(request)
+  );
+
+  ipcMain.handle("transcription:cancel", async () => {
+    transcriptionController.cancel();
+  });
+
+  ipcMain.handle(
     "log",
     (_evt, level: "info" | "warn" | "error", msg: string) => {
       const line = `[${new Date().toISOString()}] [renderer:${level}] ${msg}`;
@@ -1170,6 +1188,11 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(async () => {
   registerIpc();
+  installWindowsLoopbackDisplayMediaHandler(
+    process.platform,
+    session.defaultSession,
+    desktopCapturer
+  );
 
   // Make sure the output dirs exist before the UI asks for them.
   try {

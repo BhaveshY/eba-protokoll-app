@@ -131,9 +131,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
         config.keytermProfile || "default"
       );
       const project = projectName.trim() || deriveProjectName(audio.filename);
-      setLoaded(audio);
-      void startTx({
-        apiKey,
+      const started = startTx({
         config,
         audioBlob: audio.blob,
         filename: audio.filename,
@@ -141,7 +139,8 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
         keyterms,
         project,
       });
-      return true;
+      if (started) setLoaded(audio);
+      return started;
     } catch (err) {
       notify(
         "error",
@@ -300,13 +299,15 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
     <div className="flex min-h-screen flex-col">
       <Header
         uiLanguage={config.uiLanguage}
+        keytermProfile={config.keytermProfile || "default"}
         onChangeUiLanguage={changeUiLanguage}
+        onOpenGlossary={() => setGlossaryOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
-      <main className="mx-auto w-full max-w-5xl flex-1 px-5 py-6 sm:px-7 sm:py-8">
-        <div className="grid gap-5 md:grid-cols-5 md:gap-6">
-          <div className="flex flex-col gap-4 md:col-span-3">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-5 py-6 sm:px-7 sm:py-7">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="flex flex-col gap-4">
             <RecordingPanel
               config={config}
               projectName={projectName}
@@ -320,7 +321,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
             />
           </div>
 
-          <div className="flex flex-col gap-4 md:col-span-2">
+          <div className="flex flex-col gap-4">
             <ProgressPanel
               tx={txState}
               isActive={transcribing}
@@ -336,7 +337,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
       </main>
 
       <footer className="border-t border-line bg-bg-footer">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-5 py-2 text-[11px] text-fg-muted sm:px-7">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3 px-5 py-2 text-[11px] text-fg-muted sm:px-7">
           <span className="hidden flex-wrap items-center gap-x-3 gap-y-1 md:flex">
             <span className="flex items-center gap-1.5">
               <kbd>⌘T</kbd> {t("app.footer.transcribe")}
@@ -351,7 +352,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
               <kbd>Esc</kbd> {t("app.footer.cancel")}
             </span>
           </span>
-          <span className="text-fg-subtle ml-auto">v0.1.2</span>
+          <span className="text-fg-subtle ml-auto">v0.1.3</span>
         </div>
       </footer>
 

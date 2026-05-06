@@ -4,6 +4,8 @@
  * The preload script exposes `window.eba` with these methods.
  */
 
+import type { DeepgramResponse } from "./deepgram";
+
 export type UiLanguage = "de" | "en";
 
 export interface AppConfig {
@@ -74,6 +76,14 @@ export interface KeytermProfiles {
   profiles: Record<string, string[]>;
 }
 
+export interface TranscribeAudioRequest {
+  audioBytes: ArrayBuffer;
+  filename: string;
+  config: AppConfig;
+  isRecordedStereo: boolean;
+  keyterms: string[];
+}
+
 export interface EbaApi {
   platform: "darwin" | "win32" | "linux";
 
@@ -114,6 +124,11 @@ export interface EbaApi {
     save(profile: string, terms: string[]): Promise<string[]>; // returns normalized terms
     createProfile(name: string): Promise<string[]>; // returns new profile list
     deleteProfile(name: string): Promise<string[]>; // returns new profile list
+  };
+
+  transcription: {
+    transcribe(request: TranscribeAudioRequest): Promise<DeepgramResponse>;
+    cancel(): Promise<void>;
   };
 
   // Log + open external

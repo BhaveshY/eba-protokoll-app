@@ -30,11 +30,11 @@ export function RecentList({
               className="group relative border-t border-line first:border-t-0"
             >
               <button
-                className="flex w-full min-w-0 items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-bg-subtle"
+                className="flex w-full min-w-0 items-center gap-3 px-5 py-3.5 pr-16 text-left transition-colors hover:bg-bg-subtle"
                 onClick={() => onOpen(item.path)}
                 title={item.path}
               >
-                <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center text-fg-subtle">
+                <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-bg-card text-fg-muted">
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
                     <path
                       d="M3 1.5h5l3 3V12a.5.5 0 01-.5.5h-7a.5.5 0 01-.5-.5V2a.5.5 0 01.5-.5z"
@@ -51,13 +51,16 @@ export function RecentList({
                   </svg>
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] text-fg">
+                  <span className="block truncate text-[13px] font-medium text-fg">
                     {item.name}
                   </span>
                   <span className="block text-[11px] text-fg-subtle">
                     {formatDate(item.mtime, locale)} · {humanSize(item.size)}
                     {item.subtitlePath ? ` · ${t("recent.hasSubtitles")}` : ""}
                   </span>
+                </span>
+                <span className="hidden rounded-md border border-success/20 bg-success-soft px-2 py-0.5 text-[11px] font-medium text-success sm:inline-flex">
+                  {t("recent.ready")}
                 </span>
               </button>
               <button

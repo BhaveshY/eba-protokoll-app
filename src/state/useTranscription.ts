@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
-  transcribe,
   TranscriptionCancelled,
   TranscriptionError,
 } from "../lib/deepgram";
@@ -12,6 +11,7 @@ import {
   responseToSegments,
   safeProject,
 } from "../lib/transcript";
+import { SingleFlight } from "../lib/singleFlight";
 import type { Segment, TranscribeStage } from "../lib/types";
 import type { AppConfig } from "@shared/ipc";
 
@@ -26,7 +26,6 @@ export interface TranscriptionState {
 }
 
 export interface StartArgs {
-  apiKey: string;
   config: AppConfig;
   audioBlob: Blob;
   filename: string;
@@ -47,146 +46,142 @@ export function useTranscription() {
   });
 
   const abortRef = useRef<AbortController | null>(null);
+  const singleFlightRef = useRef(new SingleFlight());
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
+    void window.eba.transcription.cancel();
   }, []);
 
   const start = useCallback(
-    async (args: StartArgs): Promise<void> => {
+    (args: StartArgs): boolean => {
       const controller = new AbortController();
-      abortRef.current = controller;
-
-      setState({
-        stage: "prepare",
-        status: "Audio vorbereiten",
-        uploadPct: 0,
-        error: null,
-        segments: [],
-        transcriptPath: "",
-        subtitlePath: "",
-      });
-
-      try {
-        await window.eba.fs.ensureOutputDirs(args.config.outputDir);
-
-        setState((s) => ({ ...s, stage: "upload", status: "Upload startet" }));
-
-        const response = await transcribe({
-          blob: args.audioBlob,
-          filename: args.filename,
-          apiKey: args.apiKey,
-          endpoint: args.config.deepgramEndpoint,
-          options: {
-            language: args.config.language,
-            multichannel: args.isRecordedStereo,
-            keyterms: args.keyterms,
-            smartFormat: args.config.smartFormat,
-            filterFillers: args.config.filterFillers,
-            paragraphs: args.config.paragraphs,
-            summarize: args.config.summarize,
-          },
-          signal: controller.signal,
-          onStage: (label) =>
-            setState((s) => ({ ...s, status: label })),
-          onUpload: (p) =>
-            setState((s) => ({
-              ...s,
-              uploadPct: p.total ? (p.sent / p.total) * 100 : 0,
-            })),
-        });
-
-        setState((s) => ({
-          ...s,
-          stage: "deepgram",
-          status: "Antwort verarbeiten",
-          uploadPct: 100,
-        }));
-
-        const segments = responseToSegments(response, args.isRecordedStereo);
-        if (!segments.length) {
-          throw new TranscriptionError(
-            "Deepgram hat keinen Transkript-Text zurueckgegeben. Die Aufnahme wurde nicht als leeres Transkript gespeichert."
-          );
-        }
-
-        setState((s) => ({ ...s, stage: "save", status: "Transkript speichern" }));
-
-        const stem = `${safeProject(args.project)}_${timestampForFile()}`;
-        const text = formatTranscript(segments, {});
-        const files = [
-          { kind: "transcript", filename: `${stem}.txt`, text },
-        ];
-
-        if (args.config.generateSubtitles) {
-          setState((s) => ({ ...s, status: "Untertitel speichern" }));
-          files.push({
-            kind: "subtitles",
-            filename: `${stem}.srt`,
-            text: formatSubRip(segments, {}),
-          });
-        }
-
-        if (args.config.summarize) {
-          const summary = formatSummary(
-            segments,
-            extractDeepgramSummary(response)
-          );
-          if (summary.trim()) {
-            files.push({
-              kind: "summary",
-              filename: `${stem}.summary.txt`,
-              text: summary.trim() + "\n",
-            });
-          }
-        }
-
-        const saved = await window.eba.fs.saveTranscriptFiles(
-          args.config.outputDir,
-          files
-        );
-        const outPath =
-          saved.find((file) => file.kind === "transcript")?.path ?? "";
-        const subtitlePath =
-          saved.find((file) => file.kind === "subtitles")?.path ?? "";
+      const started = singleFlightRef.current.run(async () => {
+        abortRef.current = controller;
 
         setState({
-          stage: "done",
-          status: subtitlePath
-            ? `Gespeichert: ${outPath} + SRT`
-            : `Gespeichert: ${outPath}`,
-          uploadPct: 100,
+          stage: "prepare",
+          status: "Audio vorbereiten",
+          uploadPct: 0,
           error: null,
-          segments,
-          transcriptPath: outPath,
-          subtitlePath,
+          segments: [],
+          transcriptPath: "",
+          subtitlePath: "",
         });
-      } catch (err) {
-        if (err instanceof TranscriptionCancelled) {
+
+        try {
+          await window.eba.fs.ensureOutputDirs(args.config.outputDir);
+
           setState((s) => ({
             ...s,
-            stage: "cancelled",
-            status: "Abgebrochen. Audio bleibt fuer erneuten Versuch.",
+            stage: "upload",
+            status: `Hochladen (${(args.audioBlob.size / 1_048_576).toFixed(1)} MB)`,
           }));
-        } else if (err instanceof TranscriptionError) {
+          const audioBytes = await args.audioBlob.arrayBuffer();
+          if (controller.signal.aborted) throw new TranscriptionCancelled();
+
+          const response = await window.eba.transcription.transcribe({
+            audioBytes,
+            filename: args.filename,
+            config: args.config,
+            isRecordedStereo: args.isRecordedStereo,
+            keyterms: args.keyterms,
+          });
+
           setState((s) => ({
             ...s,
-            stage: "error",
-            status: err.message,
-            error: err.message,
+            stage: "deepgram",
+            status: "Antwort verarbeiten",
+            uploadPct: 100,
           }));
-        } else {
-          const msg = (err as Error).message || "Unerwarteter Fehler";
-          setState((s) => ({
-            ...s,
-            stage: "error",
-            status: msg,
-            error: msg,
-          }));
+
+          const segments = responseToSegments(response, args.isRecordedStereo);
+          if (!segments.length) {
+            throw new TranscriptionError(
+              "Deepgram hat keinen Transkript-Text zurueckgegeben. Die Aufnahme wurde nicht als leeres Transkript gespeichert."
+            );
+          }
+
+          setState((s) => ({ ...s, stage: "save", status: "Transkript speichern" }));
+
+          const stem = `${safeProject(args.project)}_${timestampForFile()}`;
+          const text = formatTranscript(segments, {});
+          const files = [
+            { kind: "transcript", filename: `${stem}.txt`, text },
+          ];
+
+          if (args.config.generateSubtitles) {
+            setState((s) => ({ ...s, status: "Untertitel speichern" }));
+            files.push({
+              kind: "subtitles",
+              filename: `${stem}.srt`,
+              text: formatSubRip(segments, {}),
+            });
+          }
+
+          if (args.config.summarize) {
+            const summary = formatSummary(
+              segments,
+              extractDeepgramSummary(response)
+            );
+            if (summary.trim()) {
+              files.push({
+                kind: "summary",
+                filename: `${stem}.summary.txt`,
+                text: summary.trim() + "\n",
+              });
+            }
+          }
+
+          const saved = await window.eba.fs.saveTranscriptFiles(
+            args.config.outputDir,
+            files
+          );
+          const outPath =
+            saved.find((file) => file.kind === "transcript")?.path ?? "";
+          const subtitlePath =
+            saved.find((file) => file.kind === "subtitles")?.path ?? "";
+
+          setState({
+            stage: "done",
+            status: subtitlePath
+              ? `Gespeichert: ${outPath} + SRT`
+              : `Gespeichert: ${outPath}`,
+            uploadPct: 100,
+            error: null,
+            segments,
+            transcriptPath: outPath,
+            subtitlePath,
+          });
+        } catch (err) {
+          if (isTranscriptionCancelled(err)) {
+            setState((s) => ({
+              ...s,
+              stage: "cancelled",
+              status: "Abgebrochen. Audio bleibt fuer erneuten Versuch.",
+            }));
+          } else if (err instanceof TranscriptionError) {
+            setState((s) => ({
+              ...s,
+              stage: "error",
+              status: err.message,
+              error: err.message,
+            }));
+          } else {
+            const msg = (err as Error).message || "Unerwarteter Fehler";
+            setState((s) => ({
+              ...s,
+              stage: "error",
+              status: msg,
+              error: msg,
+            }));
+          }
+        } finally {
+          if (abortRef.current === controller) abortRef.current = null;
         }
-      } finally {
-        abortRef.current = null;
-      }
+      });
+
+      return started !== null;
     },
     []
   );
@@ -207,6 +202,12 @@ export function useTranscription() {
     () => ({ state, start, cancel, reset }),
     [state, start, cancel, reset]
   );
+}
+
+function isTranscriptionCancelled(err: unknown): boolean {
+  if (err instanceof TranscriptionCancelled) return true;
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /abgebrochen|cancelled|canceled|abort/i.test(msg);
 }
 
 function timestampForFile(): string {

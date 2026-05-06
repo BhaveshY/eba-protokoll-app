@@ -79,6 +79,24 @@ describe("buildQuery", () => {
     expect(q.getAll("keyterm")).toEqual(["Baugesuch", "Rohbau"]);
   });
 
+  it("does not request filler filtering for non-English transcripts", () => {
+    const q = buildQuery({
+      ...baseOpts,
+      language: "de",
+      filterFillers: true,
+    });
+    expect(q.has("filler_words")).toBe(false);
+  });
+
+  it("requests filler filtering for English transcripts", () => {
+    const q = buildQuery({
+      ...baseOpts,
+      language: "en",
+      filterFillers: true,
+    });
+    expect(q.get("filler_words")).toBe("false");
+  });
+
   it("does not request Deepgram summaries for multilingual transcripts", () => {
     const q = buildQuery({ ...baseOpts, summarize: true });
     expect(q.has("summarize")).toBe(false);

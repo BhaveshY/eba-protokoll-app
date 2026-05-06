@@ -74,6 +74,24 @@ in den Einstellungen auswählen.
 `keyterm`-Parameter an Deepgram gesendet werden und die Erkennungsgenauigkeit
 für domänenspezifisches Vokabular verbessern.
 
+Der Glossar-Editor akzeptiert einzelne Begriffe sowie Listen. Beim Import werden
+Zeilen, Kommas und Semikolons als Trenner erkannt; Mehrwortbegriffe bleiben
+erhalten.
+
+Wichtig: Nur eigene, lizenzierte oder anderweitig freigegebene Begriffslisten
+importieren. Einzelne kurze Begriffe sind in der Regel nicht das eigentliche
+Problem, aber umfangreiche Woerterbuch-Glossare, Uebersetzungen, Definitionen
+oder deren Auswahl/Anordnung koennen urheber- oder datenbankrechtlich geschuetzt
+sein.
+
+
+## For Minutes Only
+
+Der Modus **For Minutes Only** ist fuer kurze Protokoll-Diktate gedacht. Er
+fordert vor dem Start eine Bestaetigung an und startet danach eine reine
+Mikrofonaufnahme ohne System-Audio-Quelle. Das ersetzt keine Einwilligung:
+Teilnehmende oder Meeting-Audio duerfen nicht ohne passende Rechtsgrundlage oder
+Zustimmung aufgenommen werden.
 
 ## Entwicklung
 

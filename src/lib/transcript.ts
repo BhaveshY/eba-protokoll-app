@@ -479,7 +479,7 @@ export function formatSummary(
 
   const items = localSummaryItems(segments);
   if (!items.length) return "";
-  return ["Zusammenfassung", "", ...items.map((item) => `- ${item}`)].join("\n");
+  return ["Automatische Auszuege", "", ...items.map((item) => `- ${item}`)].join("\n");
 }
 
 function localSummaryItems(segments: Segment[]): string[] {

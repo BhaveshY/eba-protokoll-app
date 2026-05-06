@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "../lib/clsx";
+import { mergeGlossaryTerms, parseGlossaryTerms } from "../lib/glossary";
 import { useT } from "../lib/i18n";
 import { Field } from "./ui/Field";
 
@@ -25,10 +26,11 @@ export function GlossaryPanel({
   const [terms, setTerms] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [newTerm, setNewTerm] = useState("");
+  const [bulkTerms, setBulkTerms] = useState("");
   const [newProfile, setNewProfile] = useState("");
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [loading, setLoading] = useState(true);
-  const savingRef = useRef<Promise<void> | null>(null);
+  const savingRef = useRef<Promise<boolean> | null>(null);
 
   // Load terms when profile changes
   useEffect(() => {
@@ -63,30 +65,30 @@ export function GlossaryPanel({
   }, [onClose]);
 
   const persist = useCallback(
-    async (next: string[]) => {
+    async (next: string[]): Promise<boolean> => {
       const task = (async () => {
         try {
           const saved = await window.eba.keyterms.save(currentProfile, next);
           setTerms(saved);
+          return true;
         } catch (err) {
           notify("error", t("glossary.save.failed", { msg: (err as Error).message }));
+          return false;
         }
       })();
       savingRef.current = task;
-      await task;
+      return await task;
     },
     [currentProfile, notify, t]
   );
 
   const addTerm = useCallback(async () => {
-    const v = newTerm.trim();
-    if (!v) return;
-    if (terms.some((x) => x.toLocaleLowerCase() === v.toLocaleLowerCase())) {
-      setNewTerm("");
-      return;
-    }
+    const additions = parseGlossaryTerms(newTerm);
+    if (!additions.length) return;
+    const next = mergeGlossaryTerms(terms, additions);
     setNewTerm("");
-    await persist([...terms, v]);
+    if (!next.added) return;
+    await persist(next.terms);
   }, [newTerm, terms, persist]);
 
   const removeTerm = useCallback(
@@ -95,6 +97,25 @@ export function GlossaryPanel({
     },
     [terms, persist]
   );
+
+  const parsedBulkTerms = useMemo(
+    () => parseGlossaryTerms(bulkTerms),
+    [bulkTerms]
+  );
+
+  const importTerms = useCallback(async () => {
+    if (!parsedBulkTerms.length) return;
+    const next = mergeGlossaryTerms(terms, parsedBulkTerms);
+    if (!next.added) {
+      setBulkTerms("");
+      notify("info", t("glossary.import.none"));
+      return;
+    }
+    const saved = await persist(next.terms);
+    if (!saved) return;
+    setBulkTerms("");
+    notify("success", t("glossary.import.success", { count: next.added }));
+  }, [parsedBulkTerms, persist, notify, t, terms]);
 
   const visibleTerms = useMemo(() => {
     const q = query.trim().toLocaleLowerCase();
@@ -159,7 +180,7 @@ export function GlossaryPanel({
       }}
     >
       <div
-        className="flex max-h-[min(90vh,760px)] w-full max-w-xl animate-fadeInUp flex-col overflow-hidden rounded-card border border-line bg-bg-card shadow-cardHover"
+        className="flex max-h-[min(90vh,780px)] w-full max-w-lg animate-fadeInUp flex-col overflow-hidden rounded-card border border-line bg-bg-card shadow-cardHover"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className="flex items-start justify-between gap-4 border-b border-line px-5 py-4 sm:px-6">
@@ -296,6 +317,30 @@ export function GlossaryPanel({
               </button>
             </div>
           </div>
+
+          <Field label={t("glossary.import.label")}>
+            <div className="grid gap-2 sm:grid-cols-[1fr,auto]">
+              <div className="grid gap-1.5">
+                <textarea
+                  className="input min-h-[112px] resize-y leading-relaxed"
+                  value={bulkTerms}
+                  onChange={(e) => setBulkTerms(e.target.value)}
+                  placeholder={t("glossary.import.placeholder")}
+                />
+                <span className="text-[11px] leading-snug text-fg-subtle">
+                  {t("glossary.import.count", { count: parsedBulkTerms.length })}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="btn-primary self-start sm:self-end"
+                onClick={() => void importTerms()}
+                disabled={!parsedBulkTerms.length}
+              >
+                {t("glossary.import.action")}
+              </button>
+            </div>
+          </Field>
 
           <div className="flex items-center justify-between gap-3">
             <input
