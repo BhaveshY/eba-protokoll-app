@@ -21,7 +21,7 @@ type Vars = Record<string, string | number>;
 
 const de = {
   // Header
-  "app.name": "Transcriptor",
+  "app.name": "EBA Protokoll",
   "app.tagline": "Aufnehmen. Transkribieren. Pruefen.",
   "header.settings": "Einstellungen",
   "header.settings.title": "Einstellungen (Cmd/Ctrl + ,)",
@@ -270,7 +270,7 @@ export type TranslationKey = keyof Dict;
 
 const en: Dict = {
   // Header
-  "app.name": "Transcriptor",
+  "app.name": "EBA Protokoll",
   "app.tagline": "Record. Transcribe. Review.",
   "header.settings": "Settings",
   "header.settings.title": "Settings (Cmd/Ctrl + ,)",

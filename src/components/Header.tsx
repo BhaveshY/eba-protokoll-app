@@ -3,6 +3,8 @@ import clsx from "../lib/clsx";
 import { useT } from "../lib/i18n";
 import { LanguageToggle } from "./ui/LanguageToggle";
 
+const appIconUrl = new URL("../assets/app-icon.png", import.meta.url).href;
+
 export function Header({
   uiLanguage,
   keytermProfile,
@@ -108,17 +110,10 @@ export function Header({
 function Mark() {
   return (
     <span
-      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-fg text-fg-invert"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-white p-0.5 shadow-sm"
       aria-hidden
     >
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-        <path
-          d="M3 2h6M3 6h6M3 10h4"
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-        />
-      </svg>
+      <img src={appIconUrl} alt="" className="h-full w-full object-contain" />
     </span>
   );
 }

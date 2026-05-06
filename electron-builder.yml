@@ -1,6 +1,7 @@
 appId: de.eb-a.protokoll
 productName: EBA Protokoll
 copyright: Copyright © 2026 EB&A
+icon: icon.png
 directories:
   output: release
   buildResources: resources
@@ -12,6 +13,9 @@ files:
   - "!**/*.map"
 asar: true
 asarUnpack: []
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
 
 mac:
   category: public.app-category.productivity

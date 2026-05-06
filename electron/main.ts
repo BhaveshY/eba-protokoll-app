@@ -11,6 +11,7 @@ import {
   shell,
 } from "electron";
 import * as path from "node:path";
+import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import type {
   AppConfig,
@@ -27,6 +28,7 @@ import { MainTranscriptionController } from "./transcription";
 import { installWindowsLoopbackDisplayMediaHandler } from "./systemAudio";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+const APP_NAME = "EBA Protokoll";
 
 const CONFIG_FILE = "config.json";
 const API_KEY_FILE = "deepgram.bin";
@@ -38,6 +40,8 @@ let recordingWidgetWindow: BrowserWindow | null = null;
 let recordingWidgetLoad: Promise<BrowserWindow> | null = null;
 let lastRecordingWidgetState: RecordingWidgetState | null = null;
 const transcriptionController = new MainTranscriptionController({ readApiKey });
+
+app.setName(APP_NAME);
 
 // --- config --------------------------------------------------------------
 
@@ -1146,6 +1150,7 @@ function registerIpc(): void {
 // --- window -------------------------------------------------------------
 
 function createWindow(): BrowserWindow {
+  const icon = appIconPath();
   const win = new BrowserWindow({
     width: 900,
     height: 820,
@@ -1153,7 +1158,9 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     backgroundColor: "#f5f6f8",
     show: false,
+    title: APP_NAME,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       sandbox: false,
@@ -1186,7 +1193,23 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+function appIconPath(): string | undefined {
+  const candidates = [
+    path.join(process.resourcesPath, "icon.png"),
+    path.join(process.cwd(), "resources", "icon.png"),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
 app.whenReady().then(async () => {
+  const icon = appIconPath();
+  if (process.platform === "darwin" && icon) {
+    app.dock?.setIcon(icon);
+  }
+  app.setAboutPanelOptions({
+    applicationName: APP_NAME,
+    applicationVersion: app.getVersion(),
+  });
   registerIpc();
   installWindowsLoopbackDisplayMediaHandler(
     process.platform,
