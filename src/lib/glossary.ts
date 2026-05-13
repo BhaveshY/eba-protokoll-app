@@ -28,6 +28,13 @@ export function mergeGlossaryTerms(
   return { terms, added };
 }
 
+export function mergeGlobalGlossaryTerms(
+  globalTerms: string[],
+  profileTerms: string[]
+): string[] {
+  return mergeGlossaryTerms(globalTerms, profileTerms).terms;
+}
+
 function normalizeGlossaryTerms(terms: Iterable<string>): string[] {
   const seen = new Set<string>();
   const out: string[] = [];

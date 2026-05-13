@@ -22,7 +22,7 @@ import type {
   TranscriptFileRequest,
   TranscriptFileResult,
 } from "../shared/ipc";
-import { DEFAULT_CONFIG } from "../shared/ipc";
+import { DEFAULT_CONFIG, EBA_GLOBAL_PROFILE } from "../shared/ipc";
 import { assessAudioImport, supportedAudioExtension } from "../shared/audioLimits";
 import { MainTranscriptionController } from "./transcription";
 import { installWindowsLoopbackDisplayMediaHandler } from "./systemAudio";
@@ -137,14 +137,17 @@ async function listTranscripts(base: string, limit = 8): Promise<RecentTranscrip
   for (const name of entries) {
     if (!name.endsWith(".txt")) continue;
     if (name.endsWith(".summary.txt")) continue;
+    if (name.endsWith(".readable.txt")) continue;
     const full = path.join(folder, name);
     try {
       const stat = await fsp.stat(full);
       if (!stat.isFile()) continue;
+      const readablePath = await matchingReadablePath(folder, name);
       const subtitlePath = await matchingSubtitlePath(folder, name);
       items.push({
         name,
         path: full,
+        ...(readablePath ? { readablePath } : {}),
         ...(subtitlePath ? { subtitlePath } : {}),
         size: stat.size,
         mtime: stat.mtimeMs,
@@ -405,6 +408,20 @@ async function matchingSubtitlePath(
   }
 }
 
+async function matchingReadablePath(
+  folder: string,
+  transcriptName: string
+): Promise<string | null> {
+  const readableName = transcriptName.replace(/\.txt$/, ".readable.txt");
+  const full = path.join(folder, readableName);
+  try {
+    const stat = await fsp.stat(full);
+    return stat.isFile() ? full : null;
+  } catch {
+    return null;
+  }
+}
+
 // --- keyterms -----------------------------------------------------------
 
 function userKeytermsPath(): string {
@@ -417,22 +434,31 @@ function bundledKeytermsPath(): string {
     : path.join(__dirname, "..", "..", "keyterms.json");
 }
 
-const DEFAULT_KEYTERMS: KeytermProfiles = { profiles: { default: [] } };
+const DEFAULT_KEYTERMS: KeytermProfiles = {
+  profiles: { [EBA_GLOBAL_PROFILE]: [], default: [] },
+};
 
 async function loadKeyterms(): Promise<KeytermProfiles> {
-  // Preferred source: user-writable copy.
+  const bundled = await loadBundledKeyterms();
+  const base = bundled ?? DEFAULT_KEYTERMS;
+
+  // Preferred source for user additions: user-writable copy.
   try {
     const raw = await fsp.readFile(userKeytermsPath(), "utf8");
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && parsed.profiles) {
-      return parsed as KeytermProfiles;
+      return mergeKeytermProfiles(base, parsed as KeytermProfiles);
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       console.warn("keyterms user read failed:", err);
     }
   }
-  // Fallback: seed from bundled file on first run.
+
+  return mergeKeytermProfiles(base, DEFAULT_KEYTERMS);
+}
+
+async function loadBundledKeyterms(): Promise<KeytermProfiles | null> {
   try {
     const raw = await fsp.readFile(bundledKeytermsPath(), "utf8");
     const parsed = JSON.parse(raw);
@@ -444,7 +470,23 @@ async function loadKeyterms(): Promise<KeytermProfiles> {
       console.warn("keyterms bundled read failed:", err);
     }
   }
-  return DEFAULT_KEYTERMS;
+  return null;
+}
+
+function mergeKeytermProfiles(
+  bundled: KeytermProfiles,
+  user: KeytermProfiles
+): KeytermProfiles {
+  const profiles: Record<string, string[]> = {
+    ...bundled.profiles,
+    ...user.profiles,
+  };
+  profiles[EBA_GLOBAL_PROFILE] = normalizeTerms([
+    ...(bundled.profiles[EBA_GLOBAL_PROFILE] ?? []),
+    ...(user.profiles[EBA_GLOBAL_PROFILE] ?? []),
+  ]);
+  if (!profiles.default) profiles.default = [];
+  return { profiles };
 }
 
 async function saveKeyterms(data: KeytermProfiles): Promise<void> {
@@ -477,11 +519,27 @@ function profileNames(data: KeytermProfiles): string[] {
   const names = Object.keys(data.profiles).sort((a, b) =>
     a.localeCompare(b, undefined, { sensitivity: "base" })
   );
-  return names.length ? names : ["default"];
+  if (!names.length) return [EBA_GLOBAL_PROFILE, "default"];
+  return names.sort((a, b) => {
+    if (a === EBA_GLOBAL_PROFILE) return -1;
+    if (b === EBA_GLOBAL_PROFILE) return 1;
+    return a.localeCompare(b, undefined, { sensitivity: "base" });
+  });
 }
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function readNumberInRange(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
 }
 
 function sanitizeConfig(input: Partial<AppConfig>): AppConfig {
@@ -507,6 +565,20 @@ function sanitizeConfig(input: Partial<AppConfig>): AppConfig {
     generateSubtitles: readBoolean(
       input.generateSubtitles,
       DEFAULT_CONFIG.generateSubtitles
+    ),
+    subtitleSpeakerLabels: readBoolean(
+      input.subtitleSpeakerLabels,
+      DEFAULT_CONFIG.subtitleSpeakerLabels
+    ),
+    readableTranscript: readBoolean(
+      input.readableTranscript,
+      DEFAULT_CONFIG.readableTranscript
+    ),
+    utteranceSplit: readNumberInRange(
+      input.utteranceSplit,
+      DEFAULT_CONFIG.utteranceSplit,
+      0.3,
+      3
     ),
   };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  mergeGlobalGlossaryTerms,
   mergeGlossaryTerms,
   parseGlossaryTerms,
 } from "../src/lib/glossary";
@@ -34,5 +35,13 @@ describe("mergeGlossaryTerms", () => {
       terms: ["Rohbau", "Beton", "Tragwerk"],
       added: 2,
     });
+  });
+});
+
+describe("mergeGlobalGlossaryTerms", () => {
+  it("combines global EBA terms with the active profile for transcription", () => {
+    expect(
+      mergeGlobalGlossaryTerms(["EB&A", "Rohbau"], ["rohbau", "Pflasterprotokoll"])
+    ).toEqual(["EB&A", "Rohbau", "Pflasterprotokoll"]);
   });
 });

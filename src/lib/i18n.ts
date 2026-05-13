@@ -69,7 +69,7 @@ const de = {
   "record.action.import": "Datei importieren …",
   "record.import.title": "Cmd/Ctrl + O",
   "record.minutes.confirm":
-    "Ich weiss, was ich tue. Es wird nur mein eigenes Mikrofon aufgenommen. Ich werde keine anderen Teilnehmenden oder Meeting-Audio ohne Einwilligung aufnehmen.",
+    "Ich nehme keine anderen Teilnehmenden oder Meeting-Audio ohne Einwilligung auf.",
   "record.widget.title": "Aufnahme laeuft",
   "record.widget.stop": "Stoppen",
   "record.widget.mic": "Mikrofon",
@@ -128,6 +128,10 @@ const de = {
   "recent.title": "Letzte Transkripte",
   "recent.empty": "Noch keine Transkripte.",
   "recent.reveal": "Im Ordner zeigen",
+  "recent.openReadable": "Lesbar",
+  "recent.openOriginal": "Original",
+  "recent.openSubtitles": "SRT",
+  "recent.hasReadable": "Lesbar",
   "recent.hasSubtitles": "SRT-Untertitel",
   "recent.ready": "Fertig",
 
@@ -162,6 +166,9 @@ const de = {
   "settings.section.intelligence": "Transkript-Qualitaet",
   "settings.intelligence.description":
     "Zusaetzliche Deepgram-Funktionen. Wirken sofort beim naechsten Transkript.",
+  "settings.section.output": "Ausgabe-Dateien",
+  "settings.output.description":
+    "Welche Dateien nach der Transkription gespeichert werden.",
   "settings.intelligence.smartFormat": "Intelligente Formatierung",
   "settings.intelligence.smartFormat.hint":
     "Zahlen, Datum, Waehrung und Einheiten werden korrekt geschrieben.",
@@ -174,9 +181,21 @@ const de = {
   "settings.intelligence.summarize": "Zusammenfassung erzeugen",
   "settings.intelligence.summarize.hint":
     "Speichert fuer Englisch eine Deepgram-Zusammenfassung, sonst automatische Auszuege.",
+  "settings.intelligence.readableTranscript": "Lesbares Transkript erzeugen",
+  "settings.intelligence.readableTranscript.hint":
+    "Speichert zusaetzlich eine geglaettete .readable.txt-Datei mit zusammengefassten Sprecherbeitraegen.",
   "settings.intelligence.generateSubtitles": "SRT-Untertitel erzeugen",
   "settings.intelligence.generateSubtitles.hint":
     "Speichert eine synchronisierte .srt-Datei neben dem Transkript.",
+  "settings.intelligence.subtitleSpeakerLabels": "Sprecher in SRT anzeigen",
+  "settings.intelligence.subtitleSpeakerLabels.hint":
+    "Fuegt Sprechernamen in jede Untertitelzeile ein. Standard: aus, damit SRT sauber bleibt.",
+  "settings.intelligence.utteranceSplit": "Sprechpause fuer neue Segmente",
+  "settings.intelligence.utteranceSplit.hint":
+    "Deepgram trennt erst nach dieser Pause in Sekunden. Hoehere Werte reduzieren kurze Fragmente bei gemischtem Deutsch/Englisch.",
+  "settings.utteranceSplit.normal": "Normal",
+  "settings.utteranceSplit.balanced": "Weniger Fragmente",
+  "settings.utteranceSplit.longer": "Laengere Abschnitte",
   "settings.transcriptLanguage.multi": "Mehrsprachig (empfohlen)",
   "settings.transcriptLanguage.de": "Deutsch",
   "settings.transcriptLanguage.en": "Englisch",
@@ -316,7 +335,7 @@ const en: Dict = {
   "record.action.import": "Import file …",
   "record.import.title": "Cmd/Ctrl + O",
   "record.minutes.confirm":
-    "I know what I am doing. Only my own microphone will be recorded. I will not record other participants or meeting audio without consent.",
+    "I will not record other participants or meeting audio without consent.",
   "record.widget.title": "Recording",
   "record.widget.stop": "Stop",
   "record.widget.mic": "Microphone",
@@ -373,6 +392,10 @@ const en: Dict = {
   "recent.title": "Recent transcripts",
   "recent.empty": "No transcripts yet.",
   "recent.reveal": "Show in folder",
+  "recent.openReadable": "Readable",
+  "recent.openOriginal": "Original",
+  "recent.openSubtitles": "SRT",
+  "recent.hasReadable": "Readable",
   "recent.hasSubtitles": "SRT subtitles",
   "recent.ready": "Ready",
 
@@ -407,6 +430,9 @@ const en: Dict = {
   "settings.section.intelligence": "Transcript quality",
   "settings.intelligence.description":
     "Extra Deepgram features. Apply to your next transcript.",
+  "settings.section.output": "Output files",
+  "settings.output.description":
+    "Which files are saved after transcription.",
   "settings.intelligence.smartFormat": "Smart formatting",
   "settings.intelligence.smartFormat.hint":
     "Numbers, dates, currency, and units are written correctly.",
@@ -419,9 +445,21 @@ const en: Dict = {
   "settings.intelligence.summarize": "Generate summary",
   "settings.intelligence.summarize.hint":
     "Saves a Deepgram summary for English, otherwise automatic excerpts.",
+  "settings.intelligence.readableTranscript": "Generate readable transcript",
+  "settings.intelligence.readableTranscript.hint":
+    "Also saves a smoothed .readable.txt file with merged speaker turns.",
   "settings.intelligence.generateSubtitles": "Generate SRT subtitles",
   "settings.intelligence.generateSubtitles.hint":
     "Saves a synced .srt file alongside the transcript.",
+  "settings.intelligence.subtitleSpeakerLabels": "Show speakers in SRT",
+  "settings.intelligence.subtitleSpeakerLabels.hint":
+    "Adds speaker names to each subtitle cue. Default: off, so SRT stays clean.",
+  "settings.intelligence.utteranceSplit": "Pause before new segment",
+  "settings.intelligence.utteranceSplit.hint":
+    "Deepgram starts a new utterance after this pause in seconds. Higher values reduce short fragments in mixed German/English.",
+  "settings.utteranceSplit.normal": "Normal",
+  "settings.utteranceSplit.balanced": "Fewer fragments",
+  "settings.utteranceSplit.longer": "Longer sections",
   "settings.transcriptLanguage.multi": "Multilingual (recommended)",
   "settings.transcriptLanguage.de": "German",
   "settings.transcriptLanguage.en": "English",

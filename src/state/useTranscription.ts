@@ -6,6 +6,7 @@ import {
 import {
   formatSubRip,
   extractDeepgramSummary,
+  formatReadableTranscript,
   formatSummary,
   formatTranscript,
   responseToSegments,
@@ -23,6 +24,7 @@ export interface TranscriptionState {
   segments: Segment[];
   transcriptPath: string;
   subtitlePath: string;
+  readablePath: string;
 }
 
 export interface StartArgs {
@@ -43,6 +45,7 @@ export function useTranscription() {
     segments: [],
     transcriptPath: "",
     subtitlePath: "",
+    readablePath: "",
   });
 
   const abortRef = useRef<AbortController | null>(null);
@@ -67,6 +70,7 @@ export function useTranscription() {
           segments: [],
           transcriptPath: "",
           subtitlePath: "",
+          readablePath: "",
         });
 
         try {
@@ -110,12 +114,22 @@ export function useTranscription() {
             { kind: "transcript", filename: `${stem}.txt`, text },
           ];
 
+          if (args.config.readableTranscript) {
+            files.push({
+              kind: "readable",
+              filename: `${stem}.readable.txt`,
+              text: formatReadableTranscript(segments, {}) + "\n",
+            });
+          }
+
           if (args.config.generateSubtitles) {
             setState((s) => ({ ...s, status: "Untertitel speichern" }));
             files.push({
               kind: "subtitles",
               filename: `${stem}.srt`,
-              text: formatSubRip(segments, {}),
+              text: formatSubRip(segments, {}, {
+                speakerLabels: args.config.subtitleSpeakerLabels,
+              }),
             });
           }
 
@@ -141,17 +155,22 @@ export function useTranscription() {
             saved.find((file) => file.kind === "transcript")?.path ?? "";
           const subtitlePath =
             saved.find((file) => file.kind === "subtitles")?.path ?? "";
+          const readablePath =
+            saved.find((file) => file.kind === "readable")?.path ?? "";
 
           setState({
             stage: "done",
-            status: subtitlePath
-              ? `Gespeichert: ${outPath} + SRT`
-              : `Gespeichert: ${outPath}`,
+            status: `Gespeichert: ${[
+              outPath,
+              readablePath ? "lesbar" : "",
+              subtitlePath ? "SRT" : "",
+            ].filter(Boolean).join(" + ")}`,
             uploadPct: 100,
             error: null,
             segments,
             transcriptPath: outPath,
             subtitlePath,
+            readablePath,
           });
         } catch (err) {
           if (isTranscriptionCancelled(err)) {
@@ -195,6 +214,7 @@ export function useTranscription() {
       segments: [],
       transcriptPath: "",
       subtitlePath: "",
+      readablePath: "",
     });
   }, []);
 

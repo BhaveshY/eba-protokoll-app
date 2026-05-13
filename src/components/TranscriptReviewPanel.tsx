@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "../lib/clsx";
 import { useT } from "../lib/i18n";
 import {
@@ -22,19 +22,25 @@ export function TranscriptReviewPanel({
   onSave: (names: Record<string, string>) => Promise<void>;
 }) {
   const t = useT();
-  const cleanedInitialNames = useMemo(
-    () => cleanSpeakerNames(initialNames),
-    [initialNames]
-  );
+  const initialNamesRef = useRef(cleanSpeakerNames(initialNames));
+  const firstInputRef = useRef<HTMLInputElement | null>(null);
+  const focusedTranscriptRef = useRef("");
+  const loadedTranscriptRef = useRef("");
   const [draftNames, setDraftNames] = useState<Record<string, string>>(
-    cleanedInitialNames
+    initialNamesRef.current
   );
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setDraftNames(cleanedInitialNames);
-  }, [cleanedInitialNames, transcriptPath]);
+    if (loadedTranscriptRef.current === transcriptPath) return;
+    loadedTranscriptRef.current = transcriptPath;
+    const cleaned = cleanSpeakerNames(initialNames);
+    initialNamesRef.current = cleaned;
+    focusedTranscriptRef.current = "";
+    setDraftNames(cleaned);
+    setActiveSpeakerId(null);
+  }, [initialNames, transcriptPath]);
 
   const speakers = useMemo(
     () => collectSpeakerReviewItems(segments, draftNames),
@@ -66,6 +72,14 @@ export function TranscriptReviewPanel({
     setActiveSpeakerId(firstUnnamedSpeakerId);
   }, [activeSpeakerId, firstUnnamedSpeakerId, renameableSpeakers]);
 
+  useEffect(() => {
+    if (!firstUnnamedSpeakerId) return;
+    if (focusedTranscriptRef.current === transcriptPath) return;
+    focusedTranscriptRef.current = transcriptPath;
+    const id = window.setTimeout(() => firstInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(id);
+  }, [firstUnnamedSpeakerId, transcriptPath]);
+
   const previewSegments = useMemo(() => {
     if (!activeSpeakerId) return segments;
     return segments.filter((segment) => segment.speaker === activeSpeakerId);
@@ -88,8 +102,8 @@ export function TranscriptReviewPanel({
   }, [draftNames, onSave]);
 
   const resetNames = useCallback(() => {
-    setDraftNames(cleanedInitialNames);
-  }, [cleanedInitialNames]);
+    setDraftNames(initialNamesRef.current);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -196,6 +210,11 @@ export function TranscriptReviewPanel({
                         {t("review.speakers.nameLabel")}
                       </span>
                       <input
+                        ref={
+                          speaker.id === firstUnnamedSpeakerId
+                            ? firstInputRef
+                            : undefined
+                        }
                         className={clsx(
                           "input",
                           !draftNames[speaker.id]?.trim() &&
@@ -209,7 +228,6 @@ export function TranscriptReviewPanel({
                           }))
                         }
                         placeholder={t("review.speakers.namePlaceholder")}
-                        autoFocus={speaker.id === firstUnnamedSpeakerId}
                       />
                     </label>
 

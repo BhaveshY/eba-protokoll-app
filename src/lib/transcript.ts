@@ -15,6 +15,7 @@ const CHANNEL_COMPLETENESS_MIN_EXTRA_WORDS = 3;
 const CHANNEL_COMPLETENESS_MIN_EXTRA_RATIO = 0.05;
 const LOCAL_SUMMARY_MAX_ITEMS = 6;
 const LOCAL_SUMMARY_MAX_TEXT_LEN = 220;
+const READABLE_TURN_GAP_SEC = 2.25;
 
 interface RawSegment {
   start: number;
@@ -72,13 +73,70 @@ export function formatTranscript(
     .join("\n");
 }
 
+export function formatReadableTranscript(
+  segments: Segment[],
+  names: Record<string, string>
+): string {
+  const turns = mergeReadableTurns(segments, names);
+  return turns
+    .map((turn) => `[${formatTimestamp(turn.start)}] ${turn.label}:\n${turn.text}`)
+    .join("\n\n");
+}
+
+interface ReadableTurn {
+  start: number;
+  end: number;
+  speaker: string;
+  label: string;
+  text: string;
+}
+
+function mergeReadableTurns(
+  segments: Segment[],
+  names: Record<string, string>
+): ReadableTurn[] {
+  const turns: ReadableTurn[] = [];
+  for (const segment of segments
+    .filter((s) => s.text.trim())
+    .sort((a, b) => a.start - b.start)) {
+    const speaker = segment.speaker;
+    const label = names[speaker]?.trim() || speaker;
+    const text = normalizeCueLine(segment.text);
+    const current = turns[turns.length - 1];
+    if (
+      current &&
+      current.speaker === speaker &&
+      segment.start - current.end <= READABLE_TURN_GAP_SEC
+    ) {
+      current.end = Math.max(current.end, segment.end);
+      current.text = joinReadableText(current.text, text);
+      continue;
+    }
+    turns.push({
+      start: segment.start,
+      end: segment.end,
+      speaker,
+      label,
+      text,
+    });
+  }
+  return turns;
+}
+
+function joinReadableText(left: string, right: string): string {
+  if (!left) return right;
+  if (!right) return left;
+  return `${left} ${right}`.replace(/\s+/g, " ").trim();
+}
+
 /**
  * Standards-compliant SubRip subtitles for video sidecars.
  * Times use Deepgram utterance boundaries at millisecond precision.
  */
 export function formatSubRip(
   segments: Segment[],
-  names: Record<string, string>
+  names: Record<string, string>,
+  options: { speakerLabels?: boolean } = {}
 ): string {
   const ordered = segments
     .filter((s) => s.text.trim())
@@ -90,7 +148,7 @@ export function formatSubRip(
     .sort((a, b) => a.start - b.start);
 
   const cues = ordered.flatMap((segment, i) => {
-    const text = cueText(segment, names);
+    const text = cueText(segment, names, options);
     if (!text) return [];
 
     const nextStart = ordered[i + 1]?.start;
@@ -145,9 +203,14 @@ function fallbackCueDuration(text: string): number {
   return Math.min(7, Math.max(1.5, words * 0.35));
 }
 
-function cueText(segment: Segment, names: Record<string, string>): string {
+function cueText(
+  segment: Segment,
+  names: Record<string, string>,
+  options: { speakerLabels?: boolean } = {}
+): string {
   const text = normalizeCueLine(segment.text);
   if (!text) return "";
+  if (!options.speakerLabels) return text;
   const label = normalizeCueLine(names[segment.speaker] ?? segment.speaker);
   return label ? `${label}: ${text}` : text;
 }

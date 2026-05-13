@@ -3,6 +3,7 @@ import {
   cleanSpeakerNames,
   collectSpeakerReviewItems,
   extractDeepgramSummary,
+  formatReadableTranscript,
   formatSubRip,
   formatSubRipTimestamp,
   formatSummary,
@@ -281,6 +282,36 @@ describe("formatTranscript", () => {
   });
 });
 
+describe("formatReadableTranscript", () => {
+  it("merges same-speaker fragments into readable mixed-language turns", () => {
+    const segs = [
+      { start: 3, end: 4, speaker: "KH", text: "Also das Pflasterprotokoll" },
+      { start: 4.1, end: 6, speaker: "KH", text: "ist jetzt erstellt" },
+      {
+        start: 6.2,
+        end: 11,
+        speaker: "KH",
+        text: "nach den Regeln, as discussed in the meeting.",
+      },
+      { start: 12, end: 14, speaker: "Team", text: "Okay, verstanden." },
+    ];
+
+    expect(formatReadableTranscript(segs, {})).toBe(
+      "[00:00:03] KH:\n" +
+        "Also das Pflasterprotokoll ist jetzt erstellt nach den Regeln, as discussed in the meeting.\n\n" +
+        "[00:00:12] Team:\n" +
+        "Okay, verstanden."
+    );
+  });
+
+  it("substitutes speaker names in readable transcripts", () => {
+    const segs = [{ start: 0, end: 1, speaker: "Sprecher 1", text: "Hallo." }];
+    expect(formatReadableTranscript(segs, { "Sprecher 1": "Anna" })).toBe(
+      "[00:00:00] Anna:\nHallo."
+    );
+  });
+});
+
 describe("formatSummary", () => {
   it("uses a valid Deepgram summary when available", () => {
     const summary = extractDeepgramSummary({
@@ -317,20 +348,20 @@ describe("formatSubRip", () => {
       { start: 65.5, end: 67.01, speaker: "Sprecher 1", text: "Hallo." },
     ];
     expect(formatSubRip(segs, {})).toBe(
-      "1\r\n" +
+        "1\r\n" +
         "00:00:00,000 --> 00:00:01,235\r\n" +
-        "Ich: Moin.\r\n\r\n" +
+        "Moin.\r\n\r\n" +
         "2\r\n" +
         "00:01:05,500 --> 00:01:07,010\r\n" +
-        "Sprecher 1: Hallo.\r\n"
+        "Hallo.\r\n"
     );
   });
 
-  it("substitutes speaker names", () => {
+  it("can include substituted speaker names when requested", () => {
     const segs = [{ start: 0, end: 1, speaker: "Sprecher 1", text: "Hallo." }];
-    expect(formatSubRip(segs, { "Sprecher 1": "Anna" })).toContain(
-      "Anna: Hallo."
-    );
+    expect(
+      formatSubRip(segs, { "Sprecher 1": "Anna" }, { speakerLabels: true })
+    ).toContain("Anna: Hallo.");
   });
 
   it("clamps overlapping cue ends to the next cue start", () => {

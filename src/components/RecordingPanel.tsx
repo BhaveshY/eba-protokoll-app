@@ -399,9 +399,9 @@ export function RecordingPanel({
         </div>
 
         <div className="rounded-lg border border-line bg-bg-subtle/70 p-4 sm:p-5">
-          <div className="grid gap-5 lg:grid-cols-[minmax(180px,0.8fr)_minmax(260px,1fr)_minmax(220px,0.8fr)] lg:items-center">
+          <div className="grid gap-5 xl:grid-cols-[minmax(180px,0.8fr)_minmax(260px,1fr)_minmax(220px,0.8fr)] xl:items-center">
             {/* Timer + status */}
-            <div className="flex flex-col items-center gap-2 text-center lg:items-start lg:text-left">
+            <div className="flex flex-col items-center gap-2 text-center xl:items-start xl:text-left">
               <div
                 className={clsx(
                   "font-mono text-[44px] leading-none tabular-nums tracking-tight transition-colors duration-150 sm:text-[50px]",
@@ -425,7 +425,7 @@ export function RecordingPanel({
             </div>
 
             {/* Live levels */}
-            <div className="border-y border-line py-4 lg:border-y-0 lg:border-l lg:py-0 lg:pl-6">
+            <div className="border-y border-line py-4 xl:border-y-0 xl:border-l xl:py-0 xl:pl-6">
               <LevelBars level={levels.mic} active={isRecording} />
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <LevelLegend

@@ -18,6 +18,9 @@ const config: AppConfig = {
   paragraphs: true,
   summarize: false,
   generateSubtitles: true,
+  subtitleSpeakerLabels: false,
+  readableTranscript: true,
+  utteranceSplit: 1.4,
 };
 
 function request(
@@ -59,6 +62,7 @@ describe("MainTranscriptionController", () => {
       filterFillers: false,
       paragraphs: true,
       summarize: false,
+      utteranceSplit: 1.4,
     });
     expect(args.blob.size).toBe(3);
   });

@@ -24,6 +24,15 @@ const TRANSCRIPT_LANGUAGES: Array<{ value: string; labelKey: TranslationKey }> =
   { value: "it", labelKey: "settings.transcriptLanguage.it" },
 ];
 
+const UTTERANCE_SPLIT_OPTIONS: Array<{
+  value: string;
+  labelKey: TranslationKey;
+}> = [
+  { value: "0.8", labelKey: "settings.utteranceSplit.normal" },
+  { value: "1.4", labelKey: "settings.utteranceSplit.balanced" },
+  { value: "2", labelKey: "settings.utteranceSplit.longer" },
+];
+
 export function SettingsPanel({
   config,
   apiKey,
@@ -61,6 +70,15 @@ export function SettingsPanel({
   const [generateSubtitles, setGenerateSubtitles] = useState(
     config.generateSubtitles
   );
+  const [subtitleSpeakerLabels, setSubtitleSpeakerLabels] = useState(
+    config.subtitleSpeakerLabels
+  );
+  const [readableTranscript, setReadableTranscript] = useState(
+    config.readableTranscript
+  );
+  const [utteranceSplit, setUtteranceSplit] = useState(
+    utteranceSplitValue(config.utteranceSplit)
+  );
   const [keytermCount, setKeytermCount] = useState<number | null>(null);
   const [allDevices, setAllDevices] = useState<AudioInputDevice[]>([]);
   const [loopback, setLoopback] = useState<AudioInputDevice[]>([]);
@@ -95,6 +113,9 @@ export function SettingsPanel({
     setParagraphs(config.paragraphs);
     setSummarize(config.summarize);
     setGenerateSubtitles(config.generateSubtitles);
+    setSubtitleSpeakerLabels(config.subtitleSpeakerLabels);
+    setReadableTranscript(config.readableTranscript);
+    setUtteranceSplit(utteranceSplitValue(config.utteranceSplit));
     setAdvancedOpen(
       Boolean(
         config.systemAudioDevice ||
@@ -175,6 +196,9 @@ export function SettingsPanel({
           paragraphs,
           summarize,
           generateSubtitles,
+          subtitleSpeakerLabels,
+          readableTranscript,
+          utteranceSplit: readSeconds(utteranceSplit, config.utteranceSplit),
         },
       });
     } finally {
@@ -358,11 +382,49 @@ export function SettingsPanel({
                 label={t("settings.intelligence.summarize")}
                 hint={t("settings.intelligence.summarize.hint")}
               />
+            </div>
+            <Field label={t("settings.intelligence.utteranceSplit")}>
+              <div className="mt-3 max-w-[260px]">
+                <select
+                  className="input"
+                  value={utteranceSplit}
+                  onChange={(e) => setUtteranceSplit(e.target.value)}
+                >
+                  {UTTERANCE_SPLIT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {t(option.labelKey)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-fg-subtle">
+                {t("settings.intelligence.utteranceSplit.hint")}
+              </p>
+            </Field>
+          </Section>
+
+          <Section
+            title={t("settings.section.output")}
+            description={t("settings.output.description")}
+          >
+            <div className="divide-y divide-line rounded-lg border border-line bg-bg-subtle px-4">
+              <Switch
+                checked={readableTranscript}
+                onChange={setReadableTranscript}
+                label={t("settings.intelligence.readableTranscript")}
+                hint={t("settings.intelligence.readableTranscript.hint")}
+              />
               <Switch
                 checked={generateSubtitles}
                 onChange={setGenerateSubtitles}
                 label={t("settings.intelligence.generateSubtitles")}
                 hint={t("settings.intelligence.generateSubtitles.hint")}
+              />
+              <Switch
+                checked={subtitleSpeakerLabels}
+                onChange={setSubtitleSpeakerLabels}
+                label={t("settings.intelligence.subtitleSpeakerLabels")}
+                hint={t("settings.intelligence.subtitleSpeakerLabels.hint")}
               />
             </div>
           </Section>
@@ -492,4 +554,16 @@ function Section({
       {children}
     </section>
   );
+}
+
+function readSeconds(value: string, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(3, Math.max(0.3, Math.round(n * 10) / 10));
+}
+
+function utteranceSplitValue(value: number): string {
+  const labels = UTTERANCE_SPLIT_OPTIONS.map((option) => option.value);
+  const text = String(readSeconds(String(value), 1.4));
+  return labels.includes(text) ? text : "1.4";
 }

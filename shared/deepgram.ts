@@ -80,6 +80,8 @@ export interface TranscribeOptions {
   paragraphs?: boolean;
   /** Generate a short summary as part of the response. */
   summarize?: boolean;
+  /** Silence length in seconds before Deepgram starts a new utterance. */
+  utteranceSplit?: number;
 }
 
 export interface UploadProgress {
@@ -126,6 +128,9 @@ export function buildQuery(opts: TranscribeOptions): URLSearchParams {
   q.set("smart_format", String(opts.smartFormat ?? true));
   q.set("punctuate", String(opts.punctuate ?? true));
   if (opts.paragraphs ?? true) q.set("paragraphs", "true");
+  if (Number.isFinite(opts.utteranceSplit) && Number(opts.utteranceSplit) > 0) {
+    q.set("utt_split", formatQueryNumber(Number(opts.utteranceSplit)));
+  }
   if (opts.filterFillers && supportsFillerFiltering(language)) {
     q.set("filler_words", "false");
   }
@@ -137,6 +142,10 @@ export function buildQuery(opts: TranscribeOptions): URLSearchParams {
     if (t) q.append("keyterm", t);
   }
   return q;
+}
+
+function formatQueryNumber(value: number): string {
+  return String(Math.round(value * 100) / 100);
 }
 
 export function supportsDeepgramSummary(language: string): boolean {

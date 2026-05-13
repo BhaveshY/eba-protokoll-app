@@ -106,6 +106,12 @@ describe("buildQuery", () => {
     const q = buildQuery({ ...baseOpts, language: "en", summarize: true });
     expect(q.get("summarize")).toBe("v2");
   });
+
+  it("requests a configurable utterance split for mixed-language transcripts", () => {
+    const q = buildQuery({ ...baseOpts, utteranceSplit: 1.4 });
+    expect(q.get("language")).toBe("multi");
+    expect(q.get("utt_split")).toBe("1.4");
+  });
 });
 
 describe("supportsDeepgramSummary", () => {

@@ -1,5 +1,19 @@
 {
   "profiles": {
+    "EBA Global": [
+      "EB&A",
+      "EBA",
+      "Pflasterprotokoll",
+      "Protokolltool",
+      "Baugesuch",
+      "Brandschutz",
+      "Bauzeitplan",
+      "Rohbau",
+      "Elektroplanung",
+      "Statik",
+      "Baubewilligung",
+      "Generalunternehmer"
+    ],
     "default": [],
     "bau": [
       "Baugesuch",

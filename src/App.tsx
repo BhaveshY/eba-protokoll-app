@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { UiLanguage } from "@shared/ipc";
+import { EBA_GLOBAL_PROFILE, type UiLanguage } from "@shared/ipc";
 import { GlossaryPanel } from "./components/GlossaryPanel";
 import { Header } from "./components/Header";
 import { ProgressPanel } from "./components/ProgressPanel";
@@ -9,7 +9,13 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { TranscriptReviewPanel } from "./components/TranscriptReviewPanel";
 import { Toast } from "./components/ui/Toast";
 import { I18nProvider, useT } from "./lib/i18n";
-import { formatSubRip, formatTranscript, sampleQuotes } from "./lib/transcript";
+import { mergeGlobalGlossaryTerms } from "./lib/glossary";
+import {
+  formatReadableTranscript,
+  formatSubRip,
+  formatTranscript,
+  sampleQuotes,
+} from "./lib/transcript";
 import type { Segment } from "./lib/types";
 import { useAppStore } from "./state/useAppStore";
 import { useTranscription } from "./state/useTranscription";
@@ -48,9 +54,11 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
     segments: Segment[];
     target: string;
     subtitleTarget: string;
+    readableTarget: string;
   } | null>(null);
   const onboardedRef = useRef(false);
   const handledTranscriptRef = useRef<string>("");
+  const emptySpeakerNamesRef = useRef<Record<string, string>>({});
 
   const transcribing =
     txState.stage !== null &&
@@ -93,6 +101,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
           segments: txState.segments,
           target: txState.transcriptPath,
           subtitleTarget: txState.subtitlePath,
+          readableTarget: txState.readablePath,
         });
       }
       void refreshRecent();
@@ -108,6 +117,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
     txState.segments,
     txState.transcriptPath,
     txState.subtitlePath,
+    txState.readablePath,
     refreshRecent,
     notify,
     t,
@@ -127,9 +137,13 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
       return false;
     }
     try {
-      const keyterms = await window.eba.keyterms.load(
-        config.keytermProfile || "default"
-      );
+      const activeProfile = config.keytermProfile || "default";
+      const globalTerms = await window.eba.keyterms.load(EBA_GLOBAL_PROFILE);
+      const profileTerms =
+        activeProfile === EBA_GLOBAL_PROFILE
+          ? []
+          : await window.eba.keyterms.load(activeProfile);
+      const keyterms = mergeGlobalGlossaryTerms(globalTerms, profileTerms);
       const project = projectName.trim() || deriveProjectName(audio.filename);
       const started = startTx({
         config,
@@ -193,7 +207,16 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
           files.push({
             kind: "subtitles",
             path: reviewState.subtitleTarget,
-            text: formatSubRip(reviewState.segments, names),
+            text: formatSubRip(reviewState.segments, names, {
+              speakerLabels: config.subtitleSpeakerLabels,
+            }),
+          });
+        }
+        if (reviewState.readableTarget) {
+          files.push({
+            kind: "readable",
+            path: reviewState.readableTarget,
+            text: formatReadableTranscript(reviewState.segments, names) + "\n",
           });
         }
         await window.eba.fs.saveTranscriptFiles(config.outputDir, files);
@@ -352,7 +375,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
               <kbd>Esc</kbd> {t("app.footer.cancel")}
             </span>
           </span>
-          <span className="text-fg-subtle ml-auto">v0.1.3</span>
+          <span className="text-fg-subtle ml-auto">v0.1.4</span>
         </div>
       </footer>
 
@@ -386,7 +409,7 @@ function AppInner({ store }: { store: ReturnType<typeof useAppStore> }) {
         <TranscriptReviewPanel
           segments={reviewState.segments}
           transcriptPath={reviewState.target}
-          initialNames={{}}
+          initialNames={emptySpeakerNamesRef.current}
           onClose={() => setReviewState(null)}
           onSave={saveReview}
         />

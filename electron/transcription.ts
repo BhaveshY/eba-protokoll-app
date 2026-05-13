@@ -44,6 +44,7 @@ export class MainTranscriptionController {
           filterFillers: request.config.filterFillers,
           paragraphs: request.config.paragraphs,
           summarize: request.config.summarize,
+          utteranceSplit: request.config.utteranceSplit,
         },
         signal: controller.signal,
       });

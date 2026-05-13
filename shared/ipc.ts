@@ -7,6 +7,7 @@
 import type { DeepgramResponse } from "./deepgram";
 
 export type UiLanguage = "de" | "en";
+export const EBA_GLOBAL_PROFILE = "EBA Global";
 
 export interface AppConfig {
   language: string;
@@ -22,6 +23,9 @@ export interface AppConfig {
   paragraphs: boolean;       // break transcript into paragraphs
   summarize: boolean;        // generate a short summary sidecar
   generateSubtitles: boolean; // generate a SubRip .srt sidecar
+  subtitleSpeakerLabels: boolean; // include speaker names in SRT cues
+  readableTranscript: boolean; // generate a readable transcript sidecar
+  utteranceSplit: number; // Deepgram pause length before a new utterance
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -36,11 +40,15 @@ export const DEFAULT_CONFIG: AppConfig = {
   paragraphs: true,
   summarize: false,
   generateSubtitles: true,
+  subtitleSpeakerLabels: false,
+  readableTranscript: true,
+  utteranceSplit: 1.4,
 };
 
 export interface RecentTranscript {
   name: string;
   path: string;
+  readablePath?: string;
   subtitlePath?: string;
   size: number;
   mtime: number;

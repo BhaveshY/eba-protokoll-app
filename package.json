@@ -1,6 +1,6 @@
 {
   "name": "eba-protokoll",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Meetings aufnehmen, transkribieren und protokollieren (Deepgram + Cowork).",
   "main": "dist-electron/electron/main.js",
   "type": "module",
