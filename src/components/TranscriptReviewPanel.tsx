@@ -119,7 +119,7 @@ export function TranscriptReviewPanel({
 
   return (
     <div
-      className="fixed inset-0 z-40 bg-fg/25 p-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-40 grid place-items-center overflow-y-auto bg-fg/25 p-3 pb-28 pt-4 backdrop-blur-[2px] sm:p-6 sm:pb-32"
       role="dialog"
       aria-modal="true"
       onMouseDown={(e) => {
@@ -127,10 +127,10 @@ export function TranscriptReviewPanel({
       }}
     >
       <div
-        className="mx-auto flex h-full w-full max-w-6xl animate-fadeInUp flex-col overflow-hidden rounded-card border border-line bg-bg-card shadow-cardHover"
+        className="mx-auto flex h-[min(740px,calc(100dvh-9rem))] min-h-[360px] w-full max-w-6xl animate-fadeInUp flex-col overflow-hidden rounded-card border border-line bg-bg-card shadow-cardHover"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="flex flex-wrap items-start justify-between gap-4 border-b border-line px-6 py-5">
+        <header className="shrink-0 flex flex-wrap items-start justify-between gap-4 border-b border-line px-6 py-5">
           <div className="min-w-0">
             <h2 className="text-[15px] font-semibold tracking-tight text-fg">
               {t("review.title")}
@@ -323,7 +323,7 @@ export function TranscriptReviewPanel({
           </section>
         </div>
 
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-bg-card px-6 py-4">
+        <footer className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-t border-line bg-bg-card px-6 py-4">
           <p className="text-[12px] text-fg-muted">
             {pendingCount === 0
               ? t("review.footer.allNamed")

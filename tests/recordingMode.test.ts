@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveRecordingAudioPlan,
+  shouldConfirmRecordingIntent,
   shouldListInputDevices,
 } from "../src/lib/recordingMode";
 
@@ -17,6 +18,12 @@ describe("shouldListInputDevices", () => {
   it("enumerates devices for normal recording only when a fallback is configured", () => {
     expect(shouldListInputDevices("meeting", "blackhole")).toBe(true);
     expect(shouldListInputDevices("meeting", "")).toBe(false);
+  });
+});
+
+describe("shouldConfirmRecordingIntent", () => {
+  it("keeps minutes-only recording as a direct mic-only action", () => {
+    expect(shouldConfirmRecordingIntent("minutes")).toBe(false);
   });
 });
 

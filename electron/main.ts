@@ -24,11 +24,16 @@ import type {
 } from "../shared/ipc";
 import { DEFAULT_CONFIG, EBA_GLOBAL_PROFILE } from "../shared/ipc";
 import { assessAudioImport, supportedAudioExtension } from "../shared/audioLimits";
+import { fitWindowToWorkArea } from "../shared/windowBounds";
 import { MainTranscriptionController } from "./transcription";
 import { installWindowsLoopbackDisplayMediaHandler } from "./systemAudio";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
 const APP_NAME = "EBA Protokoll";
+const MAIN_WINDOW_WIDTH = 900;
+const MAIN_WINDOW_HEIGHT = 820;
+const MAIN_WINDOW_MIN_WIDTH = 720;
+const MAIN_WINDOW_MIN_HEIGHT = 640;
 
 const CONFIG_FILE = "config.json";
 const API_KEY_FILE = "deepgram.bin";
@@ -1223,11 +1228,20 @@ function registerIpc(): void {
 
 function createWindow(): BrowserWindow {
   const icon = appIconPath();
+  const bounds = fitWindowToWorkArea({
+    preferredWidth: MAIN_WINDOW_WIDTH,
+    preferredHeight: MAIN_WINDOW_HEIGHT,
+    minWidth: MAIN_WINDOW_MIN_WIDTH,
+    minHeight: MAIN_WINDOW_MIN_HEIGHT,
+    workArea: screen.getPrimaryDisplay().workArea,
+  });
   const win = new BrowserWindow({
-    width: 900,
-    height: 820,
-    minWidth: 720,
-    minHeight: 640,
+    width: bounds.width,
+    height: bounds.height,
+    x: bounds.x,
+    y: bounds.y,
+    minWidth: Math.min(MAIN_WINDOW_MIN_WIDTH, bounds.width),
+    minHeight: Math.min(MAIN_WINDOW_MIN_HEIGHT, bounds.height),
     backgroundColor: "#f5f6f8",
     show: false,
     title: APP_NAME,

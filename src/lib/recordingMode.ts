@@ -17,6 +17,10 @@ export function shouldListInputDevices(
   return intent === "meeting" && configuredSystemAudio.trim().length > 0;
 }
 
+export function shouldConfirmRecordingIntent(intent: RecordingIntent): boolean {
+  return intent === "meeting";
+}
+
 export function resolveRecordingAudioPlan(
   intent: RecordingIntent,
   platform: NodeJS.Platform,

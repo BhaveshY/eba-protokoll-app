@@ -6,6 +6,7 @@ import { listInputDevices } from "../lib/devices";
 import { useT, type TranslateFn } from "../lib/i18n";
 import {
   resolveRecordingAudioPlan,
+  shouldConfirmRecordingIntent,
   shouldListInputDevices,
   type RecordingIntent,
 } from "../lib/recordingMode";
@@ -187,8 +188,10 @@ export function RecordingPanel({
 
   const startMinutesOnlyRecording = useCallback(async () => {
     if (disabled || startingRef.current || recorderRef.current) return;
-    const ok = window.confirm(t("record.minutes.confirm"));
-    if (!ok) return;
+    if (shouldConfirmRecordingIntent("minutes")) {
+      const ok = window.confirm(t("record.minutes.confirm"));
+      if (!ok) return;
+    }
     await startRecording("minutes");
   }, [disabled, startRecording, t]);
 
