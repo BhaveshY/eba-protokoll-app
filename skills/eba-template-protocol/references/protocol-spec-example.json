@@ -1,0 +1,92 @@
+{
+  "template": "pk_lp1_4",
+  "metadata": {
+    "description": "Kick-Off Meeting",
+    "project_name": "VitaSol Thermenhotel",
+    "project_number": "549",
+    "project_description": "Planung eines Thermenhotels in Bad Salzuflen",
+    "place": "Berlin",
+    "meeting_date": "10.01.2024",
+    "created_date": "12.01.2024",
+    "author": "HS",
+    "meeting_number": "01",
+    "meeting_title": "Kick-Off Meeting",
+    "time": "09.00 - 10.30 Uhr"
+  },
+  "participants": [
+    {
+      "first_name": "Helge",
+      "last_name": "Schmidt",
+      "initials": "HS",
+      "company": "Eike Becker_Architekten",
+      "company_code": "EBA",
+      "attendance": "X",
+      "distribution": "X"
+    },
+    {
+      "first_name": "Andrea",
+      "last_name": "Meurer-Wiedmayer",
+      "initials": "AM",
+      "company": "Emser Therme GmbH",
+      "company_code": "ET",
+      "attendance": "X",
+      "distribution": "X"
+    }
+  ],
+  "distribution": [
+    {
+      "first_name": "wie Teilnehmer",
+      "last_name": "",
+      "initials": "",
+      "company": ""
+    }
+  ],
+  "topics": [
+    {
+      "number": "1",
+      "title": "Einleitung",
+      "body": "Am 10.01.2024 wurde ein Kick-Off zum Projekt durchgeführt. Die Zielsetzung, die Beteiligten und die nächsten Abstimmungsschritte wurden festgelegt.",
+      "responsible": "HS",
+      "deadline": ""
+    },
+    {
+      "number": "1.1",
+      "title": "Nächste Schritte",
+      "body": "Die Projektbeteiligten prüfen die offenen Grundlagen und ergänzen die fehlenden Projektinformationen bis zum nächsten Termin.",
+      "responsible": "Alle",
+      "deadline": "17.01.2024"
+    }
+  ],
+  "documents": [
+    {
+      "title": "Agenda Kick-Off",
+      "date": "10.01.2024",
+      "version": "I",
+      "from": "EBA",
+      "to": "Alle"
+    }
+  ],
+  "appointments": [
+    {
+      "topic": "Folgetermin Planung",
+      "participants": "Projektteam",
+      "place": "Online",
+      "date": "17.01.2024",
+      "time": "09.00-10.00"
+    }
+  ],
+  "approval": {
+    "creator": "HS",
+    "created_date": "12.01.2024",
+    "reviewer": "---",
+    "reviewed_date": "---"
+  },
+  "attachments": [
+    {
+      "title": "Skizze Workshop",
+      "version": "I",
+      "date": "10.01.2024",
+      "format": "PDF"
+    }
+  ]
+}

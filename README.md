@@ -6,6 +6,12 @@ mehrsprachig, Diarisierung). Exportformat bleibt Cowork-kompatibel:
 `[HH:MM:SS] Sprechername: Text`. Optional erzeugt die App daneben eine
 synchronisierte `.srt`-Untertiteldatei fuer Video-Workflows.
 
+Fuer EBA-Protokolle im finalen Layout liegt unter
+`skills/eba-template-protocol` ein template-basierter Generator. Er kopiert die
+offiziellen QMG-024-141 DOCX/XLSX-Vorlagen und fuellt sie aus einer
+Cowork-JSON-Spezifikation; Layout, Brandfarben, Tabellenlogik und Office-Stile
+werden nicht in Markdown nachgebaut.
+
 
 ## End-User Installation
 
@@ -55,6 +61,9 @@ in den Einstellungen auswählen.
 6. Das Transkript landet unter `transkripte/` im Ausgabe-Verzeichnis.
    Format ist Cowork-kompatibel. Wenn Untertitel aktiviert sind, wird daneben
    eine gleichnamige `.srt`-Datei fuer Video-Player und Video-Editoren erzeugt.
+7. Fuer finale EBA-Protokolle: Cowork-JSON mit `COWORK_PLUGIN_SETUP.md`
+   erzeugen und danach mit `skills/eba-template-protocol` als DOCX, XLSX oder
+   PDF im offiziellen QMG-Layout ausgeben.
 
 ### Weitere Funktionen
 

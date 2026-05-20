@@ -1,0 +1,30 @@
+{
+  "gespraechsnotiz": {
+    "docx": "QMG-024-141_ORG-GESPRAECHSNOTIZ_230202-D.docx",
+    "pdf": "QMG-024-141_ORG-GESPRAECHSNOTIZ_230202-D.pdf",
+    "sha256": "D89C4B57FA22810C48AE3CEC31BB283D283DB32A4701081A4454BAB8322A3930",
+    "family": "simple"
+  },
+  "pk_lp1_4": {
+    "docx": "QMG-024-141_ORG-PK-LP1-4-MA_230227-A.docx",
+    "pdf": "QMG-024-141_ORG-PK-LP1-4-MA_230227-A.pdf",
+    "sha256": "FED52B658540355E491600D43F8E75F3254855AED7E665E1E843E2E0CC699019",
+    "family": "simple"
+  },
+  "pk_lp5": {
+    "docx": "QMG-024-141_ORG-PK-LP5-MA_230202-B.docx",
+    "pdf": "QMG-024-141_ORG-PK-LP5-MA_230202-B.pdf",
+    "sha256": "F61A9E4657A1FAC2CB0642D35FA22427087630457FF76F988700F7560ECC1A6C",
+    "family": "lp5"
+  },
+  "pk_excel": {
+    "xlsx": "QMG-024-141_ORG-PK-EXCEL-MA_240926-C.xlsx",
+    "sha256": "9DB7D927F5F6909BE842EC2BD858DF4B0985C97578FA420D04245E62C63E808A",
+    "family": "excel-formal"
+  },
+  "pk_lp1_4_excel": {
+    "xlsx": "QMG-024-141_ORG-PK-LP1-4-EXCEL-MA_240920-A.xlsx",
+    "sha256": "0026537DAFFAF3809C273B71E77264848C3BBD569E31F78DED496EABF0177E70",
+    "family": "excel-simple"
+  }
+}

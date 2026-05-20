@@ -1,0 +1,3 @@
+display_name: EBA Template Protocol
+short_description: Create EBA protocol DOCX/XLSX/PDF files from official QMG templates.
+default_prompt: Create an EBA-compliant protocol from this transcript using the original QMG protocol template, generate the appropriate DOCX or XLSX output, validate it, and export a PDF when needed.
