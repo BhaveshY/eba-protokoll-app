@@ -9,6 +9,22 @@ import sys
 from pathlib import Path
 
 
+def run_powershell(script: str) -> bool:
+    powershell = shutil.which("powershell") or shutil.which("powershell.exe")
+    if not powershell:
+        return False
+    try:
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
 def export_with_word(docx: Path, pdf: Path) -> bool:
     script = f"""
 $ErrorActionPreference = 'Stop'
@@ -24,13 +40,7 @@ try {{
   if ($word -ne $null) {{ $word.Quit() | Out-Null }}
 }}
 """
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    return result.returncode == 0 and pdf.exists() and pdf.stat().st_size > 0
+    return run_powershell(script) and pdf.exists() and pdf.stat().st_size > 0
 
 
 def export_xlsx_with_excel(xlsx: Path, pdf: Path) -> bool:
@@ -49,13 +59,7 @@ try {{
   if ($excel -ne $null) {{ $excel.Quit() | Out-Null }}
 }}
 """
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    return result.returncode == 0 and pdf.exists() and pdf.stat().st_size > 0
+    return run_powershell(script) and pdf.exists() and pdf.stat().st_size > 0
 
 
 def export_with_libreoffice(input_path: Path, pdf: Path) -> bool:
